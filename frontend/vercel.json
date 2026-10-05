@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "https://citimart-backend.onrender.com/api/$1"
+    }
+  ]
+}
