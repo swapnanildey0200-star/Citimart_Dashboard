@@ -8,6 +8,49 @@ from app.config import settings
 
 logger = logging.getLogger("citimart.db")
 
+class MotorCollectionWrapper:
+    """Wrapper around Motor collection so async find returns List directly."""
+    def __init__(self, raw_coll):
+        self.raw_coll = raw_coll
+
+    async def find(self, query: Dict[str, Any] = None, sort=None, limit: int = 0) -> List[Dict[str, Any]]:
+        cursor = self.raw_coll.find(query or {})
+        if sort:
+            cursor = cursor.sort(sort)
+        if limit and limit > 0:
+            cursor = cursor.limit(limit)
+        docs = await cursor.to_list(length=None)
+        for d in docs:
+            if "_id" in d:
+                d["_id"] = str(d["_id"])
+        return docs
+
+    async def find_one(self, query: Dict[str, Any] = None) -> Optional[Dict[str, Any]]:
+        doc = await self.raw_coll.find_one(query or {})
+        if doc and "_id" in doc:
+            doc["_id"] = str(doc["_id"])
+        return doc
+
+    async def insert_one(self, doc: Dict[str, Any]):
+        return await self.raw_coll.insert_one(doc)
+
+    async def insert_many(self, docs: List[Dict[str, Any]]):
+        if not docs:
+            return []
+        return await self.raw_coll.insert_many(docs)
+
+    async def update_one(self, query: Dict[str, Any], update: Dict[str, Any]):
+        return await self.raw_coll.update_one(query, update)
+
+    async def delete_many(self, query: Dict[str, Any] = None):
+        return await self.raw_coll.delete_many(query or {})
+
+    async def count_documents(self, query: Dict[str, Any] = None) -> int:
+        return await self.raw_coll.count_documents(query or {})
+
+    async def create_index(self, *args, **kwargs):
+        return await self.raw_coll.create_index(*args, **kwargs)
+
 class ResilientInMemoryCollection:
     """In-memory collection fallback when MongoDB is unreachable."""
     def __init__(self, name: str):
@@ -96,7 +139,7 @@ class DatabaseManager:
 
     def get_collection(self, name: str):
         if self.is_connected and self.db is not None:
-            return self.db[name]
+            return MotorCollectionWrapper(self.db[name])
         if name not in self.fallback_collections:
             self.fallback_collections[name] = ResilientInMemoryCollection(name)
         return self.fallback_collections[name]
@@ -106,7 +149,7 @@ class DatabaseManager:
         try:
             self.client = motor.motor_asyncio.AsyncIOMotorClient(
                 settings.MONGODB_URI,
-                serverSelectionTimeoutMS=2000
+                serverSelectionTimeoutMS=4000
             )
             # Test connectivity
             await self.client.admin.command('ping')
@@ -147,13 +190,11 @@ class DatabaseManager:
         coll_counts = {}
         for c in ["stores", "products", "vendors", "sales_transactions", "inventory_snapshots", "purchase_transactions", "import_jobs", "generated_alerts"]:
             coll = self.get_collection(c)
-            if hasattr(coll, "count_documents"):
-                try:
-                    coll_counts[c] = await coll.count_documents({})
-                except Exception:
-                    coll_counts[c] = 0
-            else:
-                coll_counts[c] = len(coll.docs)
+            try:
+                coll_counts[c] = await coll.count_documents({})
+            except Exception:
+                coll_counts[c] = 0
+
 
         return {
             "status": "connected" if self.is_connected else "resilient_fallback",
@@ -167,3 +208,4 @@ db_manager = DatabaseManager()
 
 def get_db():
     return db_manager
+        

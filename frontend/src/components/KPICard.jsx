@@ -17,9 +17,8 @@ export default function KPICard({
   return (
     <div
       onClick={onClick}
-      className={`bg-slate-900/90 border border-slate-800 rounded-xl p-3.5 shadow-sm transition-all hover:border-slate-700/80 ${
-        isClickable ? "cursor-pointer hover:bg-slate-850" : ""
-      }`}
+      className={`bg-slate-900/90 border border-slate-800 rounded-xl p-3.5 shadow-sm transition-all hover:border-slate-700/80 ${isClickable ? "cursor-pointer hover:bg-slate-850" : ""
+        }`}
     >
       <div className="flex items-center justify-between gap-2 mb-1.5">
         <span className="text-xs font-medium uppercase tracking-wider text-slate-400 truncate">

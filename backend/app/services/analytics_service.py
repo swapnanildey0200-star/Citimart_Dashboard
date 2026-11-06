@@ -1,5 +1,5 @@
 from typing import Dict, Any, List, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 from app.database import db_manager
 
 def calculate_growth_pct(ty: float, ly: float) -> Optional[float]:
@@ -9,6 +9,20 @@ def calculate_growth_pct(ty: float, ly: float) -> Optional[float]:
     elif ty > 0 and (ly is None or ly == 0):
         return None  # New item / entry
     return 0.0
+
+def shift_date_years(date_str: str, years: int = -1) -> str:
+    """Shifts a YYYY-MM-DD date by N years, safely handling Feb 29 leap years."""
+    if not date_str:
+        return ""
+    try:
+        dt = datetime.strptime(date_str, "%Y-%m-%d")
+        try:
+            new_dt = dt.replace(year=dt.year + years)
+        except ValueError:
+            new_dt = dt.replace(year=dt.year + years, day=28)
+        return new_dt.strftime("%Y-%m-%d")
+    except Exception:
+        return date_str
 
 class AnalyticsService:
     @staticmethod
@@ -27,18 +41,35 @@ class AnalyticsService:
         stores = await store_coll.find({})
         store_lookup = {s["store_id"]: s for s in stores}
 
+        # Resolve TY and LY date ranges
+        ty_from = filters.get("ty_date_from") or filters.get("date_from")
+        ty_to = filters.get("ty_date_to") or filters.get("date_to")
+        ly_from = filters.get("ly_date_from")
+        ly_to = filters.get("ly_date_to")
+
+        # If user gave TY dates but didn't specify LY dates, default LY to exact same duration 1 year prior
+        if ty_from and not ly_from:
+            ly_from = shift_date_years(ty_from, -1)
+        if ty_to and not ly_to:
+            ly_to = shift_date_years(ty_to, -1)
+
         # Query sales
         sales_query: Dict[str, Any] = {}
         if filters.get("stores"):
             sales_query["store_id"] = {"$in": filters["stores"]}
         
-        # Date range filtering
-        if filters.get("date_from") and filters.get("date_to"):
-            sales_query["date"] = {"$gte": filters["date_from"], "$lte": filters["date_to"]}
+        # Date range filtering across both TY and LY
+        if ty_from and ty_to and ly_from and ly_to:
+            sales_query["$or"] = [
+                {"date": {"$gte": ty_from, "$lte": ty_to}},
+                {"date": {"$gte": ly_from, "$lte": ly_to}}
+            ]
+        elif ty_from and ty_to:
+            sales_query["date"] = {"$gte": ty_from, "$lte": ty_to}
 
         all_sales = await sales_coll.find(sales_query)
 
-        # Apply product hierarchy filtering in memory
+        # Apply product hierarchy filtering and classify into TY/LY dynamically
         filtered_sales = []
         for s in all_sales:
             p = prod_lookup.get(s["sku"], {})
@@ -54,7 +85,17 @@ class AnalyticsService:
                 continue
             if filters.get("vendors") and p.get("vendor_id") not in filters["vendors"]:
                 continue
-            filtered_sales.append(s)
+
+            d = s.get("date", "")
+            s_copy = dict(s)
+            if ty_from and ty_to and ty_from <= d <= ty_to:
+                s_copy["period_type"] = "TY"
+                filtered_sales.append(s_copy)
+            elif ly_from and ly_to and ly_from <= d <= ly_to:
+                s_copy["period_type"] = "LY"
+                filtered_sales.append(s_copy)
+            elif not ty_from and not ty_to:
+                filtered_sales.append(s)
 
         # Query inventory
         inv_query: Dict[str, Any] = {}
@@ -154,29 +195,75 @@ class AnalyticsService:
         data = await cls.get_filtered_data(filters)
         sales = data["sales"]
 
-        # Aggregate daily sales
-        daily: Dict[str, Dict[str, float]] = {}
+        ty_from = filters.get("ty_date_from") or filters.get("date_from")
+        ty_to = filters.get("ty_date_to") or filters.get("date_to")
+        ly_from = filters.get("ly_date_from") or (shift_date_years(ty_from, -1) if ty_from else None)
+        ly_to = filters.get("ly_date_to") or (shift_date_years(ty_to, -1) if ty_to else None)
+
+        # Aggregate daily sales by period type
+        ty_by_date: Dict[str, float] = {}
+        ly_by_date: Dict[str, float] = {}
         for s in sales:
             d = s["date"]
-            ptype = s.get("period_type", "TY")
-            if d not in daily:
-                daily[d] = {"date": d, "ty_sales": 0.0, "ly_sales": 0.0, "ty_qty": 0.0, "ly_qty": 0.0}
-            if ptype == "TY":
-                daily[d]["ty_sales"] += s["net_sales"]
-                daily[d]["ty_qty"] += s["quantity"]
+            amt = s.get("net_sales", 0.0)
+            if s.get("period_type") == "TY":
+                ty_by_date[d] = ty_by_date.get(d, 0.0) + amt
             else:
-                daily[d]["ly_sales"] += s["net_sales"]
-                daily[d]["ly_qty"] += s["quantity"]
+                ly_by_date[d] = ly_by_date.get(d, 0.0) + amt
 
-        # Sort chronologically and take recent 30-day window for compact display
-        sorted_daily = sorted(daily.values(), key=lambda x: x["date"])
-        # Format values
-        for item in sorted_daily:
-            item["ty_sales"] = round(item["ty_sales"], 2)
-            item["ly_sales"] = round(item["ly_sales"], 2)
-            item["growth_pct"] = calculate_growth_pct(item["ty_sales"], item["ly_sales"])
+        trend_result = []
+        if ty_from and ty_to:
+            try:
+                start_dt = datetime.strptime(ty_from, "%Y-%m-%d")
+                end_dt = datetime.strptime(ty_to, "%Y-%m-%d")
+                num_days = (end_dt - start_dt).days + 1
 
-        return sorted_daily[-30:] if len(sorted_daily) > 30 else sorted_daily
+                ly_start_dt = datetime.strptime(ly_from, "%Y-%m-%d") if ly_from else None
+
+                # For large ranges, sample or step to keep max ~45 points for clean display
+                step = max(1, num_days // 45) if num_days > 45 else 1
+
+                for i in range(0, num_days, step):
+                    curr_ty = (start_dt + timedelta(days=i)).strftime("%Y-%m-%d")
+                    curr_ly = (ly_start_dt + timedelta(days=i)).strftime("%Y-%m-%d") if ly_start_dt else ""
+                    
+                    val_ty = round(ty_by_date.get(curr_ty, 0.0), 2)
+                    val_ly = round(ly_by_date.get(curr_ly, 0.0), 2) if curr_ly else 0.0
+                    
+                    trend_result.append({
+                        "date": curr_ty,
+                        "short_date": curr_ty[5:],
+                        "full_date": curr_ty,
+                        "ty_date": curr_ty,
+                        "ly_date": curr_ly,
+                        "ty_sales": val_ty,
+                        "ly_sales": val_ly,
+                        "growth_pct": calculate_growth_pct(val_ty, val_ly)
+                    })
+            except Exception:
+                pass
+
+        if not trend_result:
+            # Fallback
+            daily: Dict[str, Dict[str, float]] = {}
+            for s in sales:
+                d = s["date"]
+                ptype = s.get("period_type", "TY")
+                if d not in daily:
+                    daily[d] = {"date": d, "short_date": d[5:], "full_date": d, "ty_sales": 0.0, "ly_sales": 0.0}
+                if ptype == "TY":
+                    daily[d]["ty_sales"] += s["net_sales"]
+                else:
+                    daily[d]["ly_sales"] += s["net_sales"]
+
+            sorted_daily = sorted(daily.values(), key=lambda x: x["full_date"])
+            for item in sorted_daily:
+                item["ty_sales"] = round(item["ty_sales"], 2)
+                item["ly_sales"] = round(item["ly_sales"], 2)
+                item["growth_pct"] = calculate_growth_pct(item["ty_sales"], item["ly_sales"])
+            trend_result = sorted_daily[-30:] if len(sorted_daily) > 30 else sorted_daily
+
+        return trend_result
 
     @classmethod
     async def get_department_performance(cls, filters: Dict[str, Any]) -> List[Dict[str, Any]]:

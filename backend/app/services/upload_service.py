@@ -19,7 +19,9 @@ COLUMN_ALIASES = {
         "net_sales": ["sum of net amt", "net sales", "net amt", "net amount", "total amount", "sale value"],
         "gross_sales": ["gross sales", "gross amt", "mrp value", "gross amount"],
         "discount": ["sum of discount amt", "discount amt", "discount", "promo amt", "sum of promo amt"],
-        "cogs": ["sum of cogs with gst", "cogs", "cost", "cost price", "std cost"]
+        "cogs": ["sum of cogs with gst", "cogs", "cost", "cost price", "std cost"],
+        "bill_no": ["bill no", "bill no.", "bill number", "invoice no", "invoice number", "receipt no"],
+        "is_void": ["isvoid", "is void", "void", "cancelled"]
     },
     "inventory": {
         "snapshot_date": ["snapshot date", "date", "as on date", "stock date"],
@@ -72,7 +74,103 @@ REQUIRED_COLUMNS = {
     "store_master": ["store_id", "name"]
 }
 
+TOTAL_ROW_MARKERS = ("total", "grand total", "sub total", "subtotal", "report total")
+DATE_FORMATS = ("%d-%m-%Y", "%d/%m/%Y", "%d.%m.%Y", "%d-%b-%Y", "%d-%b-%y", "%d/%m/%y", "%Y-%m-%d", "%Y/%m/%d")
+
+
+def _is_blank(val: Any) -> bool:
+    if val is None:
+        return True
+    try:
+        if pd.isna(val):
+            return True
+    except (TypeError, ValueError):
+        pass
+    return isinstance(val, str) and val.strip().lower() in ("", "nan", "none", "null", "-", "n/a")
+
+
+def _clean_text(val: Any) -> str:
+    """Trim, collapse internal whitespace, drop non-breaking spaces."""
+    if _is_blank(val):
+        return ""
+    return re.sub(r"\s+", " ", str(val).replace("\xa0", " ")).strip()
+
+
+def _clean_code(val: Any) -> str:
+    """Item/bill codes: text form without Excel float artefacts (123.0 -> 123) or stray spaces."""
+    if isinstance(val, float) and val.is_integer():
+        val = int(val)
+    return _clean_text(val).upper()
+
+
+def _to_number(val: Any) -> Optional[float]:
+    """Parses 1,234.50 / (250) / 12- / ₹ 99 / 5% style values. Returns None if blank, raises ValueError if junk."""
+    if _is_blank(val):
+        return None
+    if isinstance(val, bool):
+        return float(val)
+    if isinstance(val, (int, float)):
+        return float(val)
+    s = _clean_text(val).replace(",", "").replace("₹", "").replace("Rs.", "").replace("Rs", "").strip()
+    negative = False
+    if s.startswith("(") and s.endswith(")"):
+        negative, s = True, s[1:-1]
+    if s.endswith("-"):
+        negative, s = True, s[:-1]
+    s = s.rstrip("%").strip()
+    num = float(s)
+    return -num if negative else num
+
+
+def _to_date(val: Any) -> Optional[str]:
+    """Returns YYYY-MM-DD or None. Handles datetimes, Excel serials and day-first text dates."""
+    if _is_blank(val):
+        return None
+    if isinstance(val, (datetime, date, pd.Timestamp)):
+        return val.strftime("%Y-%m-%d")
+    if isinstance(val, (int, float)):
+        if 20000 < val < 80000:
+            return (datetime(1899, 12, 30) + pd.to_timedelta(val, unit="D")).strftime("%Y-%m-%d")
+        return None
+    s = _clean_text(val)
+    for fmt in DATE_FORMATS:
+        try:
+            return datetime.strptime(s, fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+    try:
+        return pd.to_datetime(s, dayfirst=True).strftime("%Y-%m-%d")
+    except Exception:
+        return None
+
+
+def _is_truthy(val: Any) -> bool:
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, (int, float)) and not _is_blank(val):
+        return val != 0
+    return _clean_text(val).lower() in ("true", "yes", "y", "1", "void", "voided")
+
+
 class UploadService:
+    @staticmethod
+    def _read_dataframe(file_bytes: bytes, filename: str, header_row_idx: int) -> pd.DataFrame:
+        """Reads the file with the header at the given 1-based row, then strips the junk around the table."""
+        skip = max(0, header_row_idx - 1)
+        if filename.lower().endswith((".xlsx", ".xls")):
+            df = pd.read_excel(io.BytesIO(file_bytes), skiprows=skip, dtype=object)
+        else:
+            try:
+                df = pd.read_csv(io.BytesIO(file_bytes), skiprows=skip, dtype=object, encoding="utf-8-sig")
+            except UnicodeDecodeError:
+                df = pd.read_csv(io.BytesIO(file_bytes), skiprows=skip, dtype=object, encoding="latin-1")
+
+        df.columns = [_clean_text(c) for c in df.columns]
+        # Drop unnamed / fully empty columns and fully empty rows (spacer rows, trailing blanks)
+        df = df.loc[:, [c for c in df.columns if c and not c.lower().startswith("unnamed:")]]
+        df = df.dropna(how="all")
+        return df
+
     @staticmethod
     def parse_file_preview(file_bytes: bytes, filename: str) -> Dict[str, Any]:
         """Reads file, locates header row, returns all headers, and provides 10 preview rows."""
@@ -105,12 +203,17 @@ class UploadService:
             raise ValueError("The uploaded file is completely empty.")
 
         # Header detection: find row with highest number of non-empty string headers
+        # Score = known-alias hits (weighted) + non-empty text cells; title rows like
+        # "SALE DETAILS DAYWISE2" have few cells and no alias hits, so the real header wins.
+        known_aliases = {a for fields in COLUMN_ALIASES.values() for al in fields.values() for a in al}
         best_header_idx = 0
-        max_headers = 0
-        for idx, row in enumerate(raw_rows[:8]):
-            valid_headers = [c.strip() for c in row if c and c.strip()]
-            if len(valid_headers) > max_headers:
-                max_headers = len(valid_headers)
+        best_score = -1
+        for idx, row in enumerate(raw_rows[:15]):
+            cells = [c.strip().lower() for c in row if c and c.strip()]
+            numeric = sum(1 for c in cells if re.fullmatch(r"[\d.,\-/: ]+", c))
+            score = len(cells) + 3 * sum(1 for c in cells if c in known_aliases) - 2 * numeric
+            if score > best_score:
+                best_score = score
                 best_header_idx = idx
 
         headers = [h.strip() for h in raw_rows[best_header_idx]]
@@ -134,20 +237,30 @@ class UploadService:
         target_fields = COLUMN_ALIASES.get(data_type, {})
         mapping: Dict[str, Optional[str]] = {}
 
+        def norm(s: str) -> str:
+            return re.sub(r"[\s_]+", " ", s.lower().strip())
+
+        usable = [(h, norm(h)) for h in headers if h and h.strip()]
+        used: set = set()
+
         for target_field, aliases in target_fields.items():
             matched_header = None
-            for h in headers:
-                clean_h = h.lower().strip()
-                # exact or alias match
-                if clean_h == target_field.lower():
-                    matched_header = h
-                    break
-                for alias in aliases:
-                    if alias in clean_h or clean_h in alias:
-                        matched_header = h
+            candidates = [norm(target_field)] + [norm(a) for a in aliases]
+            # Pass 1: exact match, in alias priority order. Pass 2: alias contained in header.
+            for exact in (True, False):
+                for cand in candidates:
+                    for h, clean_h in usable:
+                        if h in used:
+                            continue
+                        if (clean_h == cand) if exact else (len(cand) >= 4 and cand in clean_h):
+                            matched_header = h
+                            break
+                    if matched_header:
                         break
                 if matched_header:
                     break
+            if matched_header:
+                used.add(matched_header)
             mapping[target_field] = matched_header
 
         return mapping
@@ -161,7 +274,6 @@ class UploadService:
         header_row_idx: int = 1
     ) -> Dict[str, Any]:
         """Validates all rows, detects errors and duplicates, and prepares valid records."""
-        is_excel = filename.lower().endswith((".xlsx", ".xls"))
         job_id = f"JOB_{uuid.uuid4().hex[:10].upper()}"
 
         # Load reference masters for foreign key validation
@@ -177,18 +289,37 @@ class UploadService:
         known_vendors = {v["vendor_id"]: v for v in await vendors_coll.find({})}
 
         # Read entire file into pandas dataframe
-        skip = max(0, header_row_idx - 1)
-        if is_excel:
-            df = pd.read_excel(io.BytesIO(file_bytes), skiprows=skip)
-        else:
-            df = pd.read_csv(io.BytesIO(file_bytes), skiprows=skip)
+        try:
+            df = UploadService._read_dataframe(file_bytes, filename, header_row_idx)
+        except Exception as e:
+            return {
+                "job_id": job_id, "data_type": data_type, "file_name": filename,
+                "total_rows": 0, "valid_rows": 0, "invalid_rows": 0, "duplicate_rows": 0,
+                "warning_count": 0, "status": "failed", "warnings": [], "valid_records": [],
+                "errors": [{"row_number": 0, "field": "file", "value": None,
+                            "reason": f"Unable to read file: {e}", "severity": "error"}],
+            }
 
-        total_rows = len(df)
         valid_records = []
         errors = []
         warnings = []
         duplicate_count = 0
         seen_keys = set()
+        invalid_row_nums = set()
+        skipped = {"totals": 0, "void": 0}
+        unknown_stores: Dict[str, List[int]] = {}
+        unknown_skus: Dict[str, List[int]] = {}
+        canonical_new_stores: Dict[str, str] = {}
+        current_year = datetime.now().year
+
+        # Remove report footer rows ("Total", "Grand Total") before they are counted as data
+        def _is_total_row(r: pd.Series) -> bool:
+            texts = [_clean_text(v).lower() for v in r.values if not _is_blank(v) and isinstance(v, str)]
+            return bool(texts) and texts[0].rstrip(":") in TOTAL_ROW_MARKERS and len(texts) <= 2
+        total_mask = df.apply(_is_total_row, axis=1) if len(df) else pd.Series([], dtype=bool)
+        skipped["totals"] = int(total_mask.sum())
+        df = df[~total_mask]
+        total_rows = len(df)
 
         req_cols = REQUIRED_COLUMNS.get(data_type, [])
         # Check if mapped required columns are present in mapping
@@ -219,7 +350,7 @@ class UploadService:
 
         # Validate rows one by one
         for row_idx, row in df.iterrows():
-            current_row_num = row_idx + header_row_idx + 1
+            current_row_num = int(row_idx) + header_row_idx + 1
             row_errors = []
             record: Dict[str, Any] = {"import_job_id": job_id}
 
@@ -227,109 +358,96 @@ class UploadService:
             for target_field, mapped_col in mapping.items():
                 if mapped_col and mapped_col in df.columns:
                     val = row[mapped_col]
-                    record[target_field] = val if pd.notna(val) else None
+                    record[target_field] = None if _is_blank(val) else val
                 else:
                     record[target_field] = None
 
             # Validation logic by data type
             if data_type == "sales":
-                # Date check
-                dt_val = record.get("date")
-                parsed_date = None
-                if dt_val is None:
-                    row_errors.append("Missing transaction date")
-                elif isinstance(dt_val, (datetime, date)):
-                    parsed_date = dt_val.strftime("%Y-%m-%d")
-                elif isinstance(dt_val, (int, float)) and dt_val > 40000:
-                    # Excel serial date
-                    parsed_date = (datetime(1899, 12, 30) + pd.to_timedelta(dt_val, unit='D')).strftime("%Y-%m-%d")
-                else:
-                    try:
-                        parsed_date = pd.to_datetime(dt_val).strftime("%Y-%m-%d")
-                    except Exception:
-                        row_errors.append(f"Invalid date format: {dt_val}")
+                # Voided bills are not sales: skip silently (counted in the cleaning summary)
+                if _is_truthy(record.get("is_void")):
+                    skipped["void"] += 1
+                    continue
 
+                # Date
+                parsed_date = _to_date(record.get("date"))
+                if record.get("date") is None:
+                    row_errors.append("Missing transaction date")
+                elif parsed_date is None:
+                    row_errors.append(f"Invalid date format: {record.get('date')}")
                 record["date"] = parsed_date
 
-                # Store matching
-                store_val = str(record.get("store_id") or "").strip()
+                # Store: match by id or name, case/space-insensitive
+                store_val = _clean_text(record.get("store_id"))
                 if not store_val:
                     row_errors.append("Missing store identifier")
                 else:
+                    ids_ci = {k.lower(): k for k in known_stores}
                     if store_val in known_stores:
                         record["store_id"] = store_val
+                    elif store_val.lower() in ids_ci:
+                        record["store_id"] = ids_ci[store_val.lower()]
                     elif store_val.lower() in store_name_to_id:
                         record["store_id"] = store_name_to_id[store_val.lower()]
                     else:
-                        # Auto-create or flag unknown
-                        warnings.append({
-                            "row_number": current_row_num,
-                            "field": "store_id",
-                            "value": store_val,
-                            "reason": f"Store '{store_val}' not found in Store Master. Will auto-register.",
-                            "severity": "warning"
-                        })
+                        store_val = canonical_new_stores.setdefault(store_val.lower(), store_val)
+                        unknown_stores.setdefault(store_val, []).append(current_row_num)
                         record["store_id"] = store_val
 
-                # SKU check
-                sku_val = str(record.get("sku") or "").strip()
-                if not sku_val or sku_val == "nan":
+                # SKU
+                sku_val = _clean_code(record.get("sku"))
+                if not sku_val:
                     row_errors.append("Missing SKU / Item Code")
                 else:
                     record["sku"] = sku_val
-                    if sku_val not in known_products:
-                        warnings.append({
-                            "row_number": current_row_num,
-                            "field": "sku",
-                            "value": sku_val,
-                            "reason": f"SKU '{sku_val}' not found in Product Master.",
-                            "severity": "warning"
-                        })
+                    if known_products and sku_val not in known_products:
+                        unknown_skus.setdefault(sku_val, []).append(current_row_num)
 
-                # Quantity check
-                try:
-                    qty = float(record.get("quantity") or 0)
-                    if qty < 0:
-                        row_errors.append(f"Negative sales quantity: {qty}")
-                    record["quantity"] = qty
-                except Exception:
-                    row_errors.append(f"Invalid quantity: {record.get('quantity')}")
+                # Numbers: parse leniently (commas, brackets, trailing minus)
+                numeric = {}
+                for fld in ("quantity", "net_sales", "selling_price", "gross_sales", "discount", "cogs"):
+                    try:
+                        numeric[fld] = _to_number(record.get(fld))
+                    except ValueError:
+                        numeric[fld] = None
+                        if fld in ("quantity", "net_sales"):
+                            row_errors.append(f"Invalid {fld.replace('_', ' ')}: {record.get(fld)}")
+                if record.get("quantity") is None:
+                    row_errors.append("Missing quantity")
+                if record.get("net_sales") is None:
+                    row_errors.append("Missing net sales amount")
 
-                # Net sales
-                try:
-                    net_sales = float(record.get("net_sales") or 0)
-                    record["net_sales"] = net_sales
-                except Exception:
-                    row_errors.append(f"Invalid net sales amount: {record.get('net_sales')}")
+                qty = numeric["quantity"] or 0.0
+                net_sales = numeric["net_sales"] or 0.0
+                record["quantity"] = qty
+                record["net_sales"] = net_sales
+                record["selling_price"] = numeric["selling_price"] or 0.0
+                record["discount"] = numeric["discount"] or 0.0
+                record["cogs"] = numeric["cogs"] or 0.0
+                record["gross_sales"] = numeric["gross_sales"] if numeric["gross_sales"] is not None else net_sales + record["discount"]
 
-                # Selling price / MRP
-                try:
-                    record["selling_price"] = float(record.get("selling_price") or record.get("mrp") or 0.0)
-                except Exception:
-                    record["selling_price"] = 0.0
+                # Returns (negative qty and amount) are valid retail data; a sign mismatch is not
+                if qty < 0 and net_sales > 0 or qty > 0 and net_sales < 0:
+                    row_errors.append(f"Quantity ({qty:g}) and net amount ({net_sales:g}) have opposite signs")
+                record["is_return"] = qty < 0
 
-                # COGS / Gross / Discount
-                try:
-                    record["cogs"] = float(record.get("cogs") or 0.0)
-                    record["gross_sales"] = float(record.get("gross_sales") or record["net_sales"])
-                    record["discount"] = float(record.get("discount") or 0.0)
-                except Exception:
-                    pass
+                # Period type (TY = current calendar year)
+                record["period_type"] = "TY" if parsed_date and int(parsed_date[:4]) >= current_year else ("LY" if parsed_date else "TY")
 
-                # Period type (TY vs LY based on date year)
-                if parsed_date:
-                    record["period_type"] = "TY" if parsed_date.startswith("2026") else "LY"
+                # Duplicates: same bill line when a bill number is mapped, else an identical full source row
+                bill_no = _clean_code(record.get("bill_no"))
+                if bill_no:
+                    tx_key = f"{bill_no}|{record.get('date')}|{record.get('store_id')}|{record.get('sku')}|{qty}|{net_sales}"
                 else:
-                    record["period_type"] = "TY"
-
-                # Duplicate transaction detection
-                tx_key = f"{record.get('date')}_{record.get('store_id')}_{record.get('sku')}_{record.get('quantity')}"
+                    tx_key = "|".join(_clean_text(v) for v in row.values)
                 if tx_key in seen_keys:
+                    # Identical lines on one bill are usually the same item scanned twice, so keep them and just report
                     duplicate_count += 1
-                    row_errors.append("Duplicate transaction row detected in file.")
                 else:
                     seen_keys.add(tx_key)
 
+                record.pop("bill_no", None)
+                record.pop("is_void", None)
                 record["transaction_id"] = f"TX_IMP_{uuid.uuid4().hex[:8]}"
                 record["is_void"] = False
 
@@ -363,6 +481,7 @@ class UploadService:
 
             # Record errors if any
             if row_errors:
+                invalid_row_nums.add(current_row_num)
                 for err in row_errors:
                     errors.append({
                         "row_number": current_row_num,
@@ -374,7 +493,25 @@ class UploadService:
             else:
                 valid_records.append(record)
 
-        invalid_count = len(errors)
+        # One aggregated warning per unknown store / SKU instead of one per row
+        for store_val, rows in unknown_stores.items():
+            warnings.append({
+                "row_number": rows[0], "field": "store_id", "value": store_val, "severity": "warning",
+                "reason": f"Store '{store_val}' not found in Store Master ({len(rows)} rows). Will auto-register."
+            })
+        if unknown_skus:
+            sample = ", ".join(list(unknown_skus)[:5])
+            warnings.append({
+                "row_number": min(r[0] for r in unknown_skus.values()), "field": "sku", "value": sample, "severity": "warning",
+                "reason": f"{len(unknown_skus)} SKUs not found in Product Master (e.g. {sample})."
+            })
+
+        if duplicate_count:
+            warnings.append({
+                "row_number": 0, "field": "row_validation", "value": None, "severity": "warning",
+                "reason": f"{duplicate_count} rows are identical to an earlier row (likely the same item scanned twice). They were kept."
+            })
+
         status = "completed" if len(valid_records) > 0 else "failed"
 
         return {
@@ -383,10 +520,16 @@ class UploadService:
             "file_name": filename,
             "total_rows": total_rows,
             "valid_rows": len(valid_records),
-            "invalid_rows": invalid_count,
+            "invalid_rows": len(invalid_row_nums),
             "duplicate_rows": duplicate_count,
             "warning_count": len(warnings),
             "status": status,
+            "cleaning_summary": {
+                "total_rows_removed": skipped["totals"],
+                "void_rows_removed": skipped["void"],
+                "unknown_stores": len(unknown_stores),
+                "unknown_skus": len(unknown_skus),
+            },
             "errors": errors[:50],  # first 50 errors for display
             "warnings": warnings[:50],
             "valid_records": valid_records
@@ -424,7 +567,7 @@ class UploadService:
             "created_at": datetime.utcnow().isoformat(),
             "error_summary": f"Imported {len(valid_records)} valid rows with {stats.get('invalid_rows', 0)} invalid rows."
         }
-        await jobs_coll.insert_one(job_doc)
+        await jobs_coll.insert_one(dict(job_doc))  # copy: the driver adds a non-serialisable _id
         return job_doc
 
     @staticmethod

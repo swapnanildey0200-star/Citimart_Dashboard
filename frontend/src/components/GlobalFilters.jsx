@@ -12,32 +12,43 @@ export default function GlobalFilters({
   const { stores = [], divisions = [], departments = [] } = options;
 
   const handleDatePreset = (preset) => {
-    let dateFrom = null;
-    let dateTo = null;
+    const today = new Date();
+    const todayStr = today.toISOString().split('T')[0];
     
-    // Default reference date for Citimart dataset is 2026-09-30
-    if (preset === "today") {
-      dateFrom = "2026-09-30";
-      dateTo = "2026-09-30";
-    } else if (preset === "yesterday") {
-      dateFrom = "2026-09-29";
-      dateTo = "2026-09-29";
+    let dateFrom = null;
+    let dateTo = todayStr;
+
+    if (preset === "yesterday") {
+      const yesterday = new Date(today);
+      yesterday.setDate(today.getDate() - 1);
+      dateFrom = yesterday.toISOString().split('T')[0];
+      dateTo = dateFrom;
     } else if (preset === "wtd") {
-      dateFrom = "2026-09-24";
-      dateTo = "2026-09-30";
+      const wtdStart = new Date(today);
+      const day = wtdStart.getDay();
+      const diff = wtdStart.getDate() - day + (day === 0 ? -6 : 1); // Monday start
+      wtdStart.setDate(diff);
+      dateFrom = wtdStart.toISOString().split('T')[0];
     } else if (preset === "mtd") {
-      dateFrom = "2026-09-01";
-      dateTo = "2026-09-30";
+      const mtdStart = new Date(today.getFullYear(), today.getMonth(), 1);
+      dateFrom = mtdStart.toISOString().split('T')[0];
     } else if (preset === "ytd") {
-      dateFrom = "2026-07-01";
-      dateTo = "2026-09-30";
+      // Financial Year starts April 1st
+      let ytdYear = today.getFullYear();
+      if (today.getMonth() < 3) { // Jan, Feb, Mar
+        ytdYear -= 1;
+      }
+      const ytdStart = new Date(ytdYear, 3, 1);
+      dateFrom = ytdStart.toISOString().split('T')[0];
     }
 
     onChange({
       ...filters,
       date_preset: preset,
       date_from: dateFrom,
-      date_to: dateTo
+      date_to: dateTo,
+      ly_date_from: null,
+      ly_date_to: null
     });
   };
 
@@ -79,24 +90,58 @@ export default function GlobalFilters({
         <div className="flex items-center gap-1.5 bg-slate-950 p-1 rounded-lg border border-slate-800 text-xs">
           <Calendar className="w-3.5 h-3.5 text-slate-400 ml-1.5 mr-0.5" />
           {[
-            { id: "today", label: "Today" },
             { id: "yesterday", label: "Yesterday" },
             { id: "wtd", label: "WTD" },
             { id: "mtd", label: "MTD" },
-            { id: "ytd", label: "TY vs LY (Q3)" }
+            { id: "ytd", label: "YTD (FY)" }
           ].map((item) => (
             <button
               key={item.id}
               onClick={() => handleDatePreset(item.id)}
-              className={`px-2.5 py-1 rounded-md font-medium transition-colors cursor-pointer ${
-                filters.date_preset === item.id
+              className={`px-2.5 py-1 rounded-md font-medium transition-colors cursor-pointer ${filters.date_preset === item.id
                   ? "bg-blue-600 text-white shadow-sm"
                   : "text-slate-400 hover:text-slate-200 hover:bg-slate-900"
-              }`}
+                }`}
             >
               {item.label}
             </button>
           ))}
+        </div>
+
+        {/* Custom Date Range TY */}
+        <div className="flex items-center gap-1.5 bg-slate-950 p-1.5 rounded-lg border border-slate-800 text-xs text-slate-200">
+          <span className="font-semibold text-blue-400">TY:</span>
+          <input 
+            type="date" 
+            className="bg-transparent outline-none cursor-pointer [&::-webkit-calendar-picker-indicator]:invert-[0.7]"
+            value={filters.date_from || ""}
+            onChange={(e) => onChange({ ...filters, date_preset: "custom", date_from: e.target.value })}
+          />
+          <span className="text-slate-500">to</span>
+          <input 
+            type="date" 
+            className="bg-transparent outline-none cursor-pointer [&::-webkit-calendar-picker-indicator]:invert-[0.7]"
+            value={filters.date_to || ""}
+            onChange={(e) => onChange({ ...filters, date_preset: "custom", date_to: e.target.value })}
+          />
+        </div>
+
+        {/* Custom Date Range LY */}
+        <div className="flex items-center gap-1.5 bg-slate-950 p-1.5 rounded-lg border border-slate-800 text-xs text-slate-200">
+          <span className="font-semibold text-orange-400">LY:</span>
+          <input 
+            type="date" 
+            className="bg-transparent outline-none cursor-pointer [&::-webkit-calendar-picker-indicator]:invert-[0.7]"
+            value={filters.ly_date_from || ""}
+            onChange={(e) => onChange({ ...filters, date_preset: "custom", ly_date_from: e.target.value })}
+          />
+          <span className="text-slate-500">to</span>
+          <input 
+            type="date" 
+            className="bg-transparent outline-none cursor-pointer [&::-webkit-calendar-picker-indicator]:invert-[0.7]"
+            value={filters.ly_date_to || ""}
+            onChange={(e) => onChange({ ...filters, date_preset: "custom", ly_date_to: e.target.value })}
+          />
         </div>
 
         {/* Hierarchy & Store Dropdowns */}
@@ -107,7 +152,7 @@ export default function GlobalFilters({
             onChange={handleStoreChange}
             className="bg-slate-950 border border-slate-800 text-slate-200 px-2.5 py-1.5 rounded-lg focus:outline-none focus:border-blue-500 cursor-pointer"
           >
-            <option value="">All Citimart Stores (5)</option>
+            <option value="">All Citimart Stores (3)</option>
             {stores.map((s) => (
               <option key={s.id} value={s.id}>
                 {s.name}

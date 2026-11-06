@@ -157,13 +157,12 @@ export default function UploadView({ onImportComplete }) {
           ].map((s) => (
             <div
               key={s.num}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md border ${
-                step === s.num
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md border ${step === s.num
                   ? "bg-blue-600 text-white border-blue-500 font-bold"
                   : step > s.num
-                  ? "bg-emerald-950/40 text-emerald-300 border-emerald-800"
-                  : "bg-slate-950 text-slate-500 border-slate-800"
-              }`}
+                    ? "bg-emerald-950/40 text-emerald-300 border-emerald-800"
+                    : "bg-slate-950 text-slate-500 border-slate-800"
+                }`}
             >
               <span>{s.num}.</span>
               <span>{s.label}</span>
@@ -192,11 +191,10 @@ export default function UploadView({ onImportComplete }) {
                   <button
                     key={dt.id}
                     onClick={() => setDataType(dt.id)}
-                    className={`p-2.5 rounded-lg border text-left text-xs font-medium transition-all cursor-pointer ${
-                      dataType === dt.id
+                    className={`p-2.5 rounded-lg border text-left text-xs font-medium transition-all cursor-pointer ${dataType === dt.id
                         ? "bg-blue-600/20 border-blue-500 text-white ring-1 ring-blue-500"
                         : "bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700"
-                    }`}
+                      }`}
                   >
                     {dt.label}
                   </button>

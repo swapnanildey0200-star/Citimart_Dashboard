@@ -29,21 +29,31 @@
   width: 6px;
   height: 6px;
 }
+
 ::-webkit-scrollbar-track {
   background: #0b0f19;
 }
+
 ::-webkit-scrollbar-thumb {
   background: #243046;
   border-radius: 3px;
 }
+
 ::-webkit-scrollbar-thumb:hover {
   background: #374151;
 }
 
 /* Subtle animation helpers */
 @keyframes fadeIn {
-  from { opacity: 0; transform: translateY(4px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .animate-fade-in {

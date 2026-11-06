@@ -68,9 +68,8 @@ export default function Header({ activeTab, onTabChange, dbStatus, alertCount = 
             <Database className="w-3.5 h-3.5 text-slate-400" />
             <div className="flex items-center gap-1.5">
               <span
-                className={`w-2 h-2 rounded-full ${
-                  isDbConnected ? "bg-emerald-400 animate-pulse" : "bg-emerald-500"
-                }`}
+                className={`w-2 h-2 rounded-full ${isDbConnected ? "bg-emerald-400 animate-pulse" : "bg-emerald-500"
+                  }`}
               />
               <span className="text-[11px] font-medium text-slate-300">
                 {isDbConnected ? "MongoDB Atlas" : "Embedded Store"}
@@ -92,11 +91,10 @@ export default function Header({ activeTab, onTabChange, dbStatus, alertCount = 
               <button
                 key={item.id}
                 onClick={() => onTabChange(item.id)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-medium transition-all cursor-pointer ${
-                  isActive
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-medium transition-all cursor-pointer ${isActive
                     ? "bg-blue-600/90 text-white shadow-sm shadow-blue-500/20"
                     : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/60"
-                }`}
+                  }`}
               >
                 <Icon className="w-3.5 h-3.5" />
                 <span>{item.label}</span>

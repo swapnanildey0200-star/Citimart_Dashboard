@@ -88,7 +88,7 @@ export async function fetchAlerts(status = null, severity = null) {
   if (status) params.push(`status=${status}`);
   if (severity) params.push(`severity=${severity}`);
   if (params.length > 0) url += `?${params.join("&")}`;
-  
+
   const res = await fetch(url);
   if (!res.ok) throw new Error("Failed to load alerts");
   return res.json();

@@ -6,7 +6,6 @@ from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.database import db_manager
-from app.services.seed_data import seed_database
 from app.routers import analytics, inventory, purchases, alerts, upload, settings as settings_router, export
 
 logging.basicConfig(
@@ -19,11 +18,7 @@ logger = logging.getLogger("citimart.main")
 async def lifespan(app: FastAPI):
     logger.info("Initializing Citimart Retail Analytics Backend...")
     await db_manager.connect()
-    # Seed initial demo retail dataset if collections are empty
-    try:
-        await seed_database(force=False)
-    except Exception as e:
-        logger.error(f"Error during database startup seed: {e}")
+    # No demo seeding: all data comes from user uploads.
     yield
     logger.info("Shutting down Citimart Retail Analytics Backend...")
     if db_manager.client:

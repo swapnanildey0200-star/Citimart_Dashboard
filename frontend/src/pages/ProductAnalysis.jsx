@@ -86,11 +86,10 @@ export default function ProductAnalysis({ filters = {} }) {
       <div className="flex items-center gap-2 border-b border-slate-800 pb-2">
         <button
           onClick={() => setActiveTab("top")}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
-            activeTab === "top"
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${activeTab === "top"
               ? "bg-emerald-600 text-white shadow-sm"
               : "text-slate-400 hover:text-white bg-slate-900"
-          }`}
+            }`}
         >
           <ArrowUpRight className="w-3.5 h-3.5" />
           <span>Top Revenue Generators</span>
@@ -98,11 +97,10 @@ export default function ProductAnalysis({ filters = {} }) {
 
         <button
           onClick={() => setActiveTab("bottom")}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
-            activeTab === "bottom"
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${activeTab === "bottom"
               ? "bg-rose-600 text-white shadow-sm"
               : "text-slate-400 hover:text-white bg-slate-900"
-          }`}
+            }`}
         >
           <TrendingDown className="w-3.5 h-3.5" />
           <span>Underperforming / Weak SKUs</span>

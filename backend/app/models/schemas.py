@@ -119,9 +119,13 @@ class AlertModel(BaseModel):
     created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
 
 class GlobalFilterParams(BaseModel):
-    date_preset: Optional[str] = "ytd"  # today, yesterday, wtd, mtd, ytd, custom
+    date_preset: Optional[str] = "custom"  # today, yesterday, wtd, mtd, qtr, custom
     date_from: Optional[str] = None
     date_to: Optional[str] = None
+    ty_date_from: Optional[str] = None
+    ty_date_to: Optional[str] = None
+    ly_date_from: Optional[str] = None
+    ly_date_to: Optional[str] = None
     compare_with: Optional[str] = "LY"  # LY = Last Year, PREV = Previous Period
     stores: Optional[List[str]] = None
     divisions: Optional[List[str]] = None

@@ -7,10 +7,8 @@ logger = logging.getLogger("citimart.seed")
 
 STORES = [
     {"store_id": "STR_CHOWRINGHEE", "name": "Citimart - Chowringhee", "region": "Central Kolkata", "store_type": "Flagship", "opening_date": "2018-05-15", "status": "Active"},
-    {"store_id": "STR_GARIAHAT", "name": "Citimart - Gariahat", "region": "South Kolkata", "store_type": "Flagship", "opening_date": "2019-09-20", "status": "Active"},
     {"store_id": "STR_HATIBAGAN", "name": "Citimart - Hatibagan", "region": "North Kolkata", "store_type": "Regular", "opening_date": "2020-11-10", "status": "Active"},
-    {"store_id": "STR_NEWMARKET", "name": "Citimart - New Market", "region": "Central Kolkata", "store_type": "Regular", "opening_date": "2021-03-01", "status": "Active"},
-    {"store_id": "STR_BEHALA", "name": "Citimart - Behala", "region": "South West Kolkata", "store_type": "Outlet", "opening_date": "2022-08-15", "status": "Active"}
+    {"store_id": "STR_NEWMARKET", "name": "Citimart - New Market", "region": "Central Kolkata", "store_type": "Regular", "opening_date": "2021-03-01", "status": "Active"}
 ]
 
 VENDORS = [

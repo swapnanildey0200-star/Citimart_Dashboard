@@ -4,7 +4,7 @@
 
 export function formatCurrency(amount, format = "lakh_crore") {
   if (amount === null || amount === undefined || isNaN(amount)) return "₹0";
-  
+
   const num = Math.abs(amount);
   const sign = amount < 0 ? "-" : "";
 
@@ -45,7 +45,7 @@ export function formatPercent(val) {
 export function getGrowthColor(val, inverse = false) {
   if (val === null || val === undefined) return "text-blue-400 bg-blue-900/30 border-blue-800";
   if (val === 0) return "text-slate-400 bg-slate-800 border-slate-700";
-  
+
   const isPositive = inverse ? val < 0 : val > 0;
   return isPositive
     ? "text-emerald-400 bg-emerald-950/40 border-emerald-800/60"

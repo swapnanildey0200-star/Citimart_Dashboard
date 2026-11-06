@@ -96,9 +96,8 @@ export default function AlertsView({ onNavigateTab }) {
             <button
               key={sev}
               onClick={() => setFilterSeverity(sev)}
-              className={`px-2.5 py-1 rounded font-medium cursor-pointer ${
-                filterSeverity === sev ? "bg-blue-600 text-white" : "text-slate-400 hover:text-white"
-              }`}
+              className={`px-2.5 py-1 rounded font-medium cursor-pointer ${filterSeverity === sev ? "bg-blue-600 text-white" : "text-slate-400 hover:text-white"
+                }`}
             >
               {sev.toUpperCase()}
             </button>
@@ -111,9 +110,8 @@ export default function AlertsView({ onNavigateTab }) {
             <button
               key={st}
               onClick={() => setFilterStatus(st)}
-              className={`px-2.5 py-1 rounded font-medium cursor-pointer ${
-                filterStatus === st ? "bg-blue-600 text-white" : "text-slate-400 hover:text-white"
-              }`}
+              className={`px-2.5 py-1 rounded font-medium cursor-pointer ${filterStatus === st ? "bg-blue-600 text-white" : "text-slate-400 hover:text-white"
+                }`}
             >
               {st.toUpperCase()}
             </button>
@@ -136,21 +134,19 @@ export default function AlertsView({ onNavigateTab }) {
             return (
               <div
                 key={alert.alert_id}
-                className={`bg-slate-900 rounded-xl p-4 shadow-sm border transition-all ${
-                  isCritical
+                className={`bg-slate-900 rounded-xl p-4 shadow-sm border transition-all ${isCritical
                     ? "border-rose-900/60 bg-gradient-to-r from-slate-900 via-rose-950/10 to-slate-900"
                     : "border-amber-900/60 bg-gradient-to-r from-slate-900 via-amber-950/10 to-slate-900"
-                }`}
+                  }`}
               >
                 {/* Header row */}
                 <div className="flex flex-wrap items-center justify-between gap-2 mb-3 border-b border-slate-800/80 pb-2.5">
                   <div className="flex items-center gap-2">
                     <span
-                      className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider border ${
-                        isCritical
+                      className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider border ${isCritical
                           ? "bg-rose-500/20 text-rose-300 border-rose-500/40"
                           : "bg-amber-500/20 text-amber-300 border-amber-500/40"
-                      }`}
+                        }`}
                     >
                       {alert.severity}
                     </span>

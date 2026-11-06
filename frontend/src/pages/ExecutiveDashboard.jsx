@@ -177,7 +177,7 @@ export default function ExecutiveDashboard({
                   dataKey="date"
                   stroke="#64748b"
                   fontSize={11}
-                  tickFormatter={(d) => d.slice(5)}
+                  tickFormatter={(d) => (d && d.length > 5 ? d.slice(5) : d)}
                 />
                 <YAxis
                   stroke="#64748b"
@@ -187,7 +187,13 @@ export default function ExecutiveDashboard({
                 <Tooltip
                   contentStyle={{ backgroundColor: "#0f172a", borderColor: "#334155", borderRadius: "8px", fontSize: "12px" }}
                   formatter={(val, name) => [formatCurrency(val), name === "ty_sales" ? "This Year (TY)" : "Last Year (LY)"]}
-                  labelFormatter={(l) => `Date: ${l}`}
+                  labelFormatter={(l, payload) => {
+                    const item = payload && payload[0]?.payload;
+                    if (item && item.ty_date && item.ly_date) {
+                      return `TY: ${item.ty_date}  vs  LY: ${item.ly_date}`;
+                    }
+                    return `Date: ${l}`;
+                  }}
                 />
                 <Legend wrapperStyle={{ fontSize: "11px", paddingTop: "6px" }} />
                 <Area

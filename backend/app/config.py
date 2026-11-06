@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     PORT: int = 8000
     HOST: str = "0.0.0.0"
     
-    # Database
+    # Database (loaded from .env)
     MONGODB_URI: str = "mongodb://localhost:27017"
     DATABASE_NAME: str = "citimart_retail"
     

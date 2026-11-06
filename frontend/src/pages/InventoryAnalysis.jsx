@@ -143,9 +143,8 @@ export default function InventoryAnalysis({ inventoryData = {}, kpiData = {} }) 
                 <button
                   key={btn.id}
                   onClick={() => setFilterClass(btn.id)}
-                  className={`w-full flex items-center justify-between p-2 rounded-lg font-medium transition-all cursor-pointer ${
-                    filterClass === btn.id ? "ring-2 ring-blue-500" : "opacity-85 hover:opacity-100"
-                  } ${btn.color}`}
+                  className={`w-full flex items-center justify-between p-2 rounded-lg font-medium transition-all cursor-pointer ${filterClass === btn.id ? "ring-2 ring-blue-500" : "opacity-85 hover:opacity-100"
+                    } ${btn.color}`}
                 >
                   <span>{btn.label}</span>
                   <span className="font-bold">{btn.count}</span>
@@ -197,15 +196,14 @@ export default function InventoryAnalysis({ inventoryData = {}, kpiData = {} }) 
                   <td className="py-2.5 text-right text-slate-400">{item.age_days}d</td>
                   <td className="py-2.5 text-right">
                     <span
-                      className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
-                        item.classification === "fast_moving"
+                      className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${item.classification === "fast_moving"
                           ? "text-emerald-400 bg-emerald-950/50 border border-emerald-800"
                           : item.classification === "slow_moving"
-                          ? "text-amber-400 bg-amber-950/50 border border-amber-800"
-                          : item.classification === "non_moving"
-                          ? "text-rose-400 bg-rose-950/50 border border-rose-800"
-                          : "text-blue-400 bg-blue-950/50 border border-blue-800"
-                      }`}
+                            ? "text-amber-400 bg-amber-950/50 border border-amber-800"
+                            : item.classification === "non_moving"
+                              ? "text-rose-400 bg-rose-950/50 border border-rose-800"
+                              : "text-blue-400 bg-blue-950/50 border border-blue-800"
+                        }`}
                     >
                       {item.classification.replace("_", " ")}
                     </span>
