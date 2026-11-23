@@ -42,6 +42,9 @@ class MotorCollectionWrapper:
     async def update_one(self, query: Dict[str, Any], update: Dict[str, Any]):
         return await self.raw_coll.update_one(query, update)
 
+    async def distinct(self, field: str, query: Dict[str, Any] = None) -> List[Any]:
+        return await self.raw_coll.distinct(field, query or {})
+
     async def delete_many(self, query: Dict[str, Any] = None):
         return await self.raw_coll.delete_many(query or {})
 
@@ -73,33 +76,34 @@ class ResilientInMemoryCollection:
         results = await self.find(query)
         return results[0] if results else None
 
+    @staticmethod
+    def _matches(d: Dict[str, Any], query: Dict[str, Any]) -> bool:
+        for k, v in query.items():
+            if k == "$or":
+                if not any(ResilientInMemoryCollection._matches(d, sub) for sub in v):
+                    return False
+                continue
+            if isinstance(v, dict):
+                if "$in" in v and d.get(k) not in v["$in"]:
+                    return False
+                if "$gte" in v and d.get(k, "") < v["$gte"]:
+                    return False
+                if "$lte" in v and d.get(k, "") > v["$lte"]:
+                    return False
+                if "$eq" in v and d.get(k) != v["$eq"]:
+                    return False
+                if "$ne" in v and d.get(k) == v["$ne"]:
+                    return False
+            elif d.get(k) != v:
+                return False
+        return True
+
     async def find(self, query: Dict[str, Any] = None, sort=None, limit: int = 0) -> List[Dict[str, Any]]:
         query = query or {}
-        matches = []
-        for d in self.docs:
-            match = True
-            for k, v in query.items():
-                if isinstance(v, dict):
-                    if "$in" in v and d.get(k) not in v["$in"]:
-                        match = False
-                        break
-                    if "$gte" in v and d.get(k, "") < v["$gte"]:
-                        match = False
-                        break
-                    if "$lte" in v and d.get(k, "") > v["$lte"]:
-                        match = False
-                        break
-                    if "$eq" in v and d.get(k) != v["$eq"]:
-                        match = False
-                        break
-                    if "$ne" in v and d.get(k) == v["$ne"]:
-                        match = False
-                        break
-                elif d.get(k) != v:
-                    match = False
-                    break
-            if match:
-                matches.append(d)
+        matches = [d for d in self.docs if self._matches(d, query)]
+        if sort:
+            for key, direction in reversed(sort):
+                matches.sort(key=lambda d, k=key: (d.get(k) is not None, d.get(k) or ""), reverse=direction < 0)
         if limit > 0:
             matches = matches[:limit]
         return matches
@@ -123,8 +127,11 @@ class ResilientInMemoryCollection:
             self.docs.clear()
             return count
         orig_len = len(self.docs)
-        self.docs = [d for d in self.docs if not all(d.get(k) == v for k, v in query.items())]
+        self.docs = [d for d in self.docs if not self._matches(d, query)]
         return orig_len - len(self.docs)
+
+    async def distinct(self, field: str, query: Dict[str, Any] = None) -> List[Any]:
+        return list({d.get(field) for d in self.docs if self._matches(d, query or {}) and d.get(field) is not None})
 
     async def create_index(self, *args, **kwargs):
         pass

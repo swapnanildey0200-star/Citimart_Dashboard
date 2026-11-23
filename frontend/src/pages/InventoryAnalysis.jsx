@@ -11,6 +11,13 @@ export default function InventoryAnalysis({ inventoryData = {}, kpiData = {} }) 
   const agingBuckets = inventoryData.aging_buckets || [];
   const items = inventoryData.items || [];
   const movementSummary = inventoryData.movement_summary || {};
+  const warehouse = inventoryData.warehouse || {};
+
+  const totalBucketValue = agingBuckets.reduce((sum, b) => sum + b.stock_value, 0);
+  const agingRiskValue = agingBuckets
+    .filter((b) => b.bucket === "91-180 days" || b.bucket === ">180 days")
+    .reduce((sum, b) => sum + b.stock_value, 0);
+  const agingRiskPct = totalBucketValue > 0 ? ((agingRiskValue / totalBucketValue) * 100).toFixed(1) : "0.0";
 
   const filteredItems = items.filter((item) => {
     const matchesSearch =
@@ -90,8 +97,18 @@ export default function InventoryAnalysis({ inventoryData = {}, kpiData = {} }) 
 
         <div className="bg-slate-900 border border-slate-800 rounded-xl p-3">
           <div className="text-xs text-slate-400">Aging Risk (&gt;90 Days)</div>
-          <div className="text-lg font-bold text-rose-400 mt-1">₹1.84 Lakhs</div>
-          <div className="text-[11px] text-slate-400 mt-0.5">14% of total inventory value</div>
+          <div className="text-lg font-bold text-rose-400 mt-1">{formatCurrency(agingRiskValue)}</div>
+          <div className="text-[11px] text-slate-400 mt-0.5">{agingRiskPct}% of store stock value</div>
+        </div>
+
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-3 col-span-2 sm:col-span-4">
+          <div className="text-xs text-slate-400">Warehouse / Godown Stock (not included above)</div>
+          <div className="text-lg font-bold text-indigo-300 mt-1">
+            {formatQuantity(warehouse.stock_qty)} units · {formatCurrency(warehouse.stock_value)}
+          </div>
+          <div className="text-[11px] text-slate-400 mt-0.5">
+            {warehouse.sku_count || 0} SKUs available to replenish stores
+          </div>
         </div>
       </div>
 

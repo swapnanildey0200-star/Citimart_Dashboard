@@ -2,9 +2,24 @@ import json
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Body
 from fastapi.responses import PlainTextResponse
 from typing import Dict, Any, List
+from app.config import settings
 from app.services.upload_service import UploadService, COLUMN_ALIASES, REQUIRED_COLUMNS
 
 router = APIRouter(prefix="/api/upload", tags=["upload"])
+
+
+async def _read_limited(file: UploadFile) -> bytes:
+    """Reads the upload in 1 MB chunks and rejects it as soon as it exceeds MAX_UPLOAD_SIZE_MB."""
+    limit = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
+    buf = bytearray()
+    while chunk := await file.read(1024 * 1024):
+        buf += chunk
+        if len(buf) > limit:
+            raise HTTPException(
+                status_code=413,
+                detail=f"File is larger than the {settings.MAX_UPLOAD_SIZE_MB} MB upload limit."
+            )
+    return bytes(buf)
 
 @router.post("/preview")
 async def preview_upload(
@@ -14,7 +29,7 @@ async def preview_upload(
     if not file.filename.lower().endswith((".xlsx", ".xls", ".csv")):
         raise HTTPException(status_code=400, detail="Only Excel (.xlsx/.xls) and CSV (.csv) files are supported.")
 
-    file_bytes = await file.read()
+    file_bytes = await _read_limited(file)
     if len(file_bytes) == 0:
         raise HTTPException(status_code=400, detail="Uploaded file is empty.")
 
@@ -44,7 +59,7 @@ async def validate_upload(
     mapping: str = Form(...),  # JSON string
     header_row_idx: int = Form(1)
 ):
-    file_bytes = await file.read()
+    file_bytes = await _read_limited(file)
     try:
         mapping_dict = json.loads(mapping)
     except Exception:
@@ -64,19 +79,22 @@ async def commit_upload(payload: Dict[str, Any] = Body(...)):
     job_id = payload.get("job_id")
     data_type = payload.get("data_type")
     filename = payload.get("file_name")
-    valid_records = payload.get("valid_records", [])
+    valid_records = payload.get("valid_records")  # optional; rows are normally staged server-side
     stats = payload.get("stats", {})
 
     if not job_id or not data_type:
         raise HTTPException(status_code=400, detail="Missing required job_id or data_type")
 
-    saved_job = await UploadService.commit_import(
-        job_id=job_id,
-        data_type=data_type,
-        filename=filename,
-        valid_records=valid_records,
-        stats=stats
-    )
+    try:
+        saved_job = await UploadService.commit_import(
+            job_id=job_id,
+            data_type=data_type,
+            filename=filename,
+            valid_records=valid_records,
+            stats=stats
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     return {"success": True, "import_job": saved_job}
 
 @router.get("/history")

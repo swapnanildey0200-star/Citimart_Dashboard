@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Body
 from typing import Dict, Any, List
-from app.services.analytics_service import AnalyticsService
+from app.services.analytics_service import AnalyticsService, is_warehouse_location
 from app.database import db_manager
 
 router = APIRouter(prefix="/api/analytics", tags=["analytics"])
@@ -35,14 +35,35 @@ async def get_filter_options():
     products = await prods_coll.find({})
     vendors = await vendors_coll.find({})
 
-    divisions = sorted(list(set(p.get("division") for p in products if p.get("division"))))
-    sections = sorted(list(set(p.get("section") for p in products if p.get("section"))))
-    departments = sorted(list(set(p.get("department") for p in products if p.get("department"))))
-    categories = sorted(list(set(p.get("category") for p in products if p.get("category"))))
-    brands = sorted(list(set(p.get("brand") for p in products if p.get("brand"))))
+    sales_coll = db_manager.get_collection("sales_transactions")
+    inv_coll = db_manager.get_collection("inventory_snapshots")
+
+    def values(field: str, *extra) -> list:
+        found = {p.get(field) for p in products if p.get(field)}
+        for more in extra:
+            found.update(v for v in more if v)
+        return sorted(found)
+
+    sales_divs, sales_depts, sales_secs, sales_stores = (
+        await sales_coll.distinct("division"), await sales_coll.distinct("department"),
+        await sales_coll.distinct("section"), await sales_coll.distinct("store_id"))
+    inv_divs, inv_depts, inv_secs = (
+        await inv_coll.distinct("division"), await inv_coll.distinct("department"), await inv_coll.distinct("section"))
+
+    divisions = values("division", sales_divs, inv_divs)
+    sections = values("section", sales_secs, inv_secs)
+    departments = values("department", sales_depts, inv_depts)
+    categories = values("category")
+    brands = values("brand")
+
+    # Stores: master data plus every shop that actually appears in sales (warehouses are not shops)
+    store_options = {s["store_id"]: {"id": s["store_id"], "name": s["name"], "region": s.get("region", "")} for s in stores}
+    for sid in sales_stores:
+        if sid and sid not in store_options and not is_warehouse_location(sid):
+            store_options[sid] = {"id": sid, "name": sid, "region": ""}
 
     return {
-        "stores": [{"id": s["store_id"], "name": s["name"], "region": s.get("region", "")} for s in stores],
+        "stores": sorted(store_options.values(), key=lambda o: o["name"]),
         "vendors": [{"id": v["vendor_id"], "name": v["name"]} for v in vendors],
         "divisions": divisions,
         "sections": sections,

@@ -59,3 +59,16 @@ async def get_metric_glossary():
             "unit": "Buckets"
         }
     ]
+
+
+@router.get("/data-freshness")
+async def get_data_freshness():
+    """Latest sales date and stock snapshot date currently in the database."""
+    async def latest(collection: str, field: str):
+        rows = await db_manager.get_collection(collection).find({}, sort=[(field, -1)], limit=1)
+        return rows[0].get(field) if rows else None
+
+    return {
+        "sales_through": await latest("sales_transactions", "date"),
+        "stock_as_on": await latest("inventory_snapshots", "snapshot_date"),
+    }

@@ -9,7 +9,7 @@ export default function GlobalFilters({
   options = {},
   isLoading = false
 }) {
-  const { stores = [], divisions = [], departments = [] } = options;
+  const { stores = [], divisions = [], sections = [], departments = [] } = options;
 
   const handleDatePreset = (preset) => {
     const today = new Date();
@@ -65,7 +65,16 @@ export default function GlobalFilters({
     onChange({
       ...filters,
       divisions: val ? [val] : null,
-      departments: null // reset department when division changes
+      sections: null, // reset lower levels when division changes
+      departments: null
+    });
+  };
+
+  const handleSectionChange = (e) => {
+    const val = e.target.value;
+    onChange({
+      ...filters,
+      sections: val ? [val] : null
     });
   };
 
@@ -80,6 +89,7 @@ export default function GlobalFilters({
   const activeFilterCount =
     (filters.stores ? 1 : 0) +
     (filters.divisions ? 1 : 0) +
+    (filters.sections ? 1 : 0) +
     (filters.departments ? 1 : 0) +
     (filters.date_preset && filters.date_preset !== "ytd" ? 1 : 0);
 
@@ -170,6 +180,20 @@ export default function GlobalFilters({
             {divisions.map((d) => (
               <option key={d} value={d}>
                 {d}
+              </option>
+            ))}
+          </select>
+
+          {/* Section select */}
+          <select
+            value={(filters.sections && filters.sections[0]) || ""}
+            onChange={handleSectionChange}
+            className="bg-slate-950 border border-slate-800 text-slate-200 px-2.5 py-1.5 rounded-lg focus:outline-none focus:border-blue-500 cursor-pointer"
+          >
+            <option value="">All Sections</option>
+            {sections.map((sec) => (
+              <option key={sec} value={sec}>
+                {sec}
               </option>
             ))}
           </select>

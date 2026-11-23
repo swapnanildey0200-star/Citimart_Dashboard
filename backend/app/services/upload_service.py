@@ -1,7 +1,11 @@
 import io
 import csv
+import json
 import re
+import shutil
+import tempfile
 import uuid
+from pathlib import Path
 from datetime import datetime, date
 from typing import Dict, Any, List, Optional, Tuple
 import pandas as pd
@@ -21,16 +25,23 @@ COLUMN_ALIASES = {
         "discount": ["sum of discount amt", "discount amt", "discount", "promo amt", "sum of promo amt"],
         "cogs": ["sum of cogs with gst", "cogs", "cost", "cost price", "std cost"],
         "bill_no": ["bill no", "bill no.", "bill number", "invoice no", "invoice number", "receipt no"],
-        "is_void": ["isvoid", "is void", "void", "cancelled"]
+        "is_void": ["isvoid", "is void", "void", "cancelled"],
+        "division": ["division", "div"],
+        "section": ["section", "sec"],
+        "department": ["department", "dept"]
     },
     "inventory": {
-        "snapshot_date": ["snapshot date", "date", "as on date", "stock date"],
-        "store_id": ["store", "store id", "store name", "store_id", "location"],
+        "snapshot_date": ["snapshot date", "date", "as on date", "stock date", "stock as on"],
+        "store_id": ["store", "store id", "store name", "store_id", "location", "source site"],
         "sku": ["item code", "sku", "barcode", "item_code", "product code"],
-        "stock_qty": ["stock qty", "closing stock", "current stock", "stock quantity", "qty", "all stors stock"],
-        "unit_cost": ["unit cost", "cost price", "cost", "std rate"],
-        "stock_value": ["stock value", "stock val", "total cost", "inventory value"],
-        "age_days": ["ageing", "age days", "days in stock", "age"]
+        "stock_qty": ["stock qty", "closing stock", "current stock", "stock quantity", "qty", "all stors stock", "closing qty"],
+        "unit_cost": ["unit cost", "cost price", "cost", "std rate", "standard rate"],
+        "stock_value": ["stock value", "stock val", "total cost", "inventory value", "closing amt"],
+        "age_days": ["ageing", "age days", "days in stock", "age"],
+        "received_month": ["category6", "cat-6", "received month", "grn month", "inward month"],
+        "division": ["division", "div"],
+        "section": ["section", "sec"],
+        "department": ["department", "dept"]
     },
     "purchases": {
         "po_id": ["grc no.", "grc no", "po id", "po number", "invoice no", "po_id"],
@@ -73,6 +84,72 @@ REQUIRED_COLUMNS = {
     "product_master": ["sku", "name", "division", "department"],
     "store_master": ["store_id", "name"]
 }
+
+# Validated rows are staged on disk (not sent back to the browser) until the import is committed.
+STAGING_DIR = Path(tempfile.gettempdir()) / "citimart_uploads"
+COMMIT_BATCH_SIZE = 5000
+STAGING_MAX_AGE_SECONDS = 24 * 3600
+
+
+def _staging_path(job_id: str) -> Path:
+    if not re.fullmatch(r"JOB_[0-9A-Z]{10}", job_id or ""):
+        raise ValueError("Invalid job_id")
+    return STAGING_DIR / f"{job_id}.jsonl"
+
+
+def _compact_sales(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Rolls bill lines up to one row per date + store + SKU and drops fields no report reads.
+
+    Analytics only ever sums quantity/sales/discount/cogs by date, store and SKU, so this is lossless
+    for every chart while cutting stored documents several-fold (keeps the DB inside Atlas free tier).
+    """
+    sums = ("quantity", "net_sales", "gross_sales", "discount", "cogs")
+    merged: Dict[tuple, Dict[str, Any]] = {}
+    for r in records:
+        key = (r["date"], r["store_id"], r["sku"])
+        m = merged.get(key)
+        if m is None:
+            m = {k: r.get(k) for k in ("date", "store_id", "sku", "division", "section", "department", "period_type")}
+            m.update({k: 0.0 for k in sums})
+            merged[key] = m
+        for k in sums:
+            m[k] += r.get(k) or 0.0
+    out = []
+    for m in merged.values():
+        for k in sums:
+            m[k] = round(m[k], 2)
+        # keep only populated hierarchy fields to save space
+        out.append({k: v for k, v in m.items() if v is not None})
+    return out
+
+
+def _stage_records(job_id: str, records: List[Dict[str, Any]]) -> None:
+    STAGING_DIR.mkdir(parents=True, exist_ok=True)
+    # Drop abandoned staging files from earlier validations
+    cutoff = datetime.now().timestamp() - STAGING_MAX_AGE_SECONDS
+    for old in STAGING_DIR.glob("JOB_*.jsonl"):
+        try:
+            if old.stat().st_mtime < cutoff:
+                old.unlink()
+        except OSError:
+            pass
+    with open(_staging_path(job_id), "w", encoding="utf-8") as f:
+        for rec in records:
+            f.write(json.dumps(rec, default=str))
+            f.write("\n")
+
+
+def _iter_staged_batches(job_id: str, batch_size: int = COMMIT_BATCH_SIZE):
+    batch: List[Dict[str, Any]] = []
+    with open(_staging_path(job_id), "r", encoding="utf-8") as f:
+        for line in f:
+            batch.append(json.loads(line))
+            if len(batch) >= batch_size:
+                yield batch
+                batch = []
+    if batch:
+        yield batch
+
 
 TOTAL_ROW_MARKERS = ("total", "grand total", "sub total", "subtotal", "report total")
 DATE_FORMATS = ("%d-%m-%Y", "%d/%m/%Y", "%d.%m.%Y", "%d-%b-%Y", "%d-%b-%y", "%d/%m/%y", "%Y-%m-%d", "%Y/%m/%d")
@@ -142,6 +219,22 @@ def _to_date(val: Any) -> Optional[str]:
         return pd.to_datetime(s, dayfirst=True).strftime("%Y-%m-%d")
     except Exception:
         return None
+
+
+def _age_from_received_month(val: Any, snapshot_date: str) -> Optional[int]:
+    """Stock age in days from an 'MM/YY' received-month label (e.g. '09/25'), measured to the snapshot date."""
+    m = re.fullmatch(r"(\d{1,2})/(\d{2})", _clean_text(val))
+    if not m or not snapshot_date:
+        return None
+    month, year = int(m.group(1)), 2000 + int(m.group(2))
+    if not 1 <= month <= 12:
+        return None
+    try:
+        received = date(year, month, 1)
+        snap = datetime.strptime(snapshot_date, "%Y-%m-%d").date()
+    except ValueError:
+        return None
+    return max(0, (snap - received).days)
 
 
 def _is_truthy(val: Any) -> bool:
@@ -310,6 +403,8 @@ class UploadService:
         unknown_stores: Dict[str, List[int]] = {}
         unknown_skus: Dict[str, List[int]] = {}
         canonical_new_stores: Dict[str, str] = {}
+        negative_stock_rows = 0
+        unknown_age_rows = 0
         current_year = datetime.now().year
 
         # Remove report footer rows ("Total", "Grand Total") before they are counted as data
@@ -394,6 +489,9 @@ class UploadService:
                         unknown_stores.setdefault(store_val, []).append(current_row_num)
                         record["store_id"] = store_val
 
+                for fld in ("division", "section", "department"):
+                    record[fld] = _clean_text(record.get(fld)) or None
+
                 # SKU
                 sku_val = _clean_code(record.get("sku"))
                 if not sku_val:
@@ -452,22 +550,41 @@ class UploadService:
                 record["is_void"] = False
 
             elif data_type == "inventory":
-                sku_val = str(record.get("sku") or "").strip()
-                store_val = str(record.get("store_id") or "").strip()
-                if not sku_val or sku_val == "nan":
+                sku_val = _clean_code(record.get("sku"))
+                store_val = _clean_text(record.get("store_id"))
+                if not sku_val:
                     row_errors.append("Missing SKU")
-                if not store_val or store_val == "nan":
+                if not store_val:
                     row_errors.append("Missing Store ID")
+                record["sku"], record["store_id"] = sku_val, store_val
+                for fld in ("division", "section", "department"):
+                    record[fld] = _clean_text(record.get(fld)) or None
+
+                snapshot = _to_date(record.get("snapshot_date")) or datetime.utcnow().strftime("%Y-%m-%d")
+                record["snapshot_date"] = snapshot
 
                 try:
-                    record["stock_qty"] = float(record.get("stock_qty") or 0)
-                    record["unit_cost"] = float(record.get("unit_cost") or 0)
-                    record["stock_value"] = float(record.get("stock_value") or (record["stock_qty"] * record["unit_cost"]))
-                    record["age_days"] = int(record.get("age_days") or 15)
-                except Exception as e:
-                    row_errors.append(f"Numeric parse error: {e}")
+                    qty = _to_number(record.get("stock_qty")) or 0.0
+                    unit_cost = _to_number(record.get("unit_cost")) or 0.0
+                    value = _to_number(record.get("stock_value"))
+                    if value is None:
+                        value = qty * unit_cost
+                    # Negative closing stock (sold before receipt etc.) is kept as zero
+                    if qty < 0:
+                        negative_stock_rows += 1
+                        qty, value = 0.0, 0.0
+                    record["stock_qty"], record["unit_cost"], record["stock_value"] = qty, unit_cost, value
 
-                record["snapshot_date"] = record.get("snapshot_date") or datetime.utcnow().strftime("%Y-%m-%d")
+                    age = _to_number(record.get("age_days"))
+                    if age is not None:
+                        record["age_days"] = int(age)
+                    else:
+                        record["age_days"] = _age_from_received_month(record.get("received_month"), snapshot)
+                        if record["age_days"] is None:
+                            unknown_age_rows += 1
+                except ValueError as e:
+                    row_errors.append(f"Numeric parse error: {e}")
+                record.pop("received_month", None)
 
             elif data_type == "product_master":
                 sku_val = str(record.get("sku") or "").strip()
@@ -506,6 +623,17 @@ class UploadService:
                 "reason": f"{len(unknown_skus)} SKUs not found in Product Master (e.g. {sample})."
             })
 
+        if negative_stock_rows:
+            warnings.append({
+                "row_number": 0, "field": "stock_qty", "value": None, "severity": "warning",
+                "reason": f"{negative_stock_rows} rows had negative closing stock. They were kept with quantity and value set to 0."
+            })
+        if unknown_age_rows:
+            warnings.append({
+                "row_number": 0, "field": "age_days", "value": None, "severity": "warning",
+                "reason": f"{unknown_age_rows} rows have no usable age or received month. Their age is unknown."
+            })
+
         if duplicate_count:
             warnings.append({
                 "row_number": 0, "field": "row_validation", "value": None, "severity": "warning",
@@ -513,6 +641,8 @@ class UploadService:
             })
 
         status = "completed" if len(valid_records) > 0 else "failed"
+        if valid_records:
+            _stage_records(job_id, _compact_sales(valid_records) if data_type == "sales" else valid_records)
 
         return {
             "job_id": job_id,
@@ -532,12 +662,31 @@ class UploadService:
             },
             "errors": errors[:50],  # first 50 errors for display
             "warnings": warnings[:50],
-            "valid_records": valid_records
+            "valid_records": []  # staged server-side; /commit needs only the job_id
         }
 
     @staticmethod
-    async def commit_import(job_id: str, data_type: str, filename: str, valid_records: List[Dict[str, Any]], stats: Dict[str, Any]):
-        """Persists valid imported records into collection and logs job history."""
+    async def _replace_overlap(target_coll, data_type: str, job_id: str) -> int:
+        """Re-importing a period replaces it: removes rows for the same stores and dates before inserting."""
+        date_field = "date" if data_type == "sales" else "snapshot_date"
+        stores, lo, hi = set(), None, None
+        for batch in _iter_staged_batches(job_id):
+            for r in batch:
+                stores.add(r["store_id"])
+                d = r.get(date_field)
+                if d:
+                    lo = d if lo is None or d < lo else lo
+                    hi = d if hi is None or d > hi else hi
+        if not stores or lo is None:
+            return 0
+        return await target_coll.delete_many({
+            "store_id": {"$in": sorted(stores)},
+            date_field: {"$gte": lo, "$lte": hi},
+        }) or 0
+
+    @staticmethod
+    async def commit_import(job_id: str, data_type: str, filename: str, valid_records: Optional[List[Dict[str, Any]]], stats: Dict[str, Any]):
+        """Persists the validated rows staged for job_id (batched) and logs job history."""
         target_coll_map = {
             "sales": "sales_transactions",
             "inventory": "inventory_snapshots",
@@ -549,8 +698,21 @@ class UploadService:
         target_coll = db_manager.get_collection(coll_name)
         jobs_coll = db_manager.get_collection("import_jobs")
 
-        if valid_records:
-            await target_coll.insert_many(valid_records)
+        inserted = 0
+        staged = _staging_path(job_id)
+        replaced = 0
+        if not valid_records and staged.exists() and data_type in ("sales", "inventory"):
+            replaced = await UploadService._replace_overlap(target_coll, data_type, job_id)
+        if valid_records:  # small/legacy callers that still send rows inline
+            for i in range(0, len(valid_records), COMMIT_BATCH_SIZE):
+                chunk = valid_records[i:i + COMMIT_BATCH_SIZE]
+                await target_coll.insert_many(chunk)
+                inserted += len(chunk)
+        elif staged.exists():
+            for batch in _iter_staged_batches(job_id):
+                await target_coll.insert_many(batch)
+                inserted += len(batch)
+            staged.unlink(missing_ok=True)
 
         # Log import job
         job_doc = {
@@ -558,14 +720,15 @@ class UploadService:
             "data_type": data_type,
             "file_name": filename,
             "file_size_bytes": stats.get("file_size_bytes", 0),
-            "total_rows": stats.get("total_rows", len(valid_records)),
-            "valid_rows": len(valid_records),
+            "total_rows": stats.get("total_rows", inserted),
+            "valid_rows": inserted,
             "invalid_rows": stats.get("invalid_rows", 0),
             "duplicate_rows": stats.get("duplicate_rows", 0),
             "warning_count": stats.get("warning_count", 0),
-            "status": "completed" if valid_records else "failed",
+            "status": "completed" if inserted else "failed",
             "created_at": datetime.utcnow().isoformat(),
-            "error_summary": f"Imported {len(valid_records)} valid rows with {stats.get('invalid_rows', 0)} invalid rows."
+            "error_summary": f"Imported {inserted} valid rows with {stats.get('invalid_rows', 0)} invalid rows."
+            + (f" Replaced {replaced} existing rows for the same stores and dates." if replaced else "")
         }
         await jobs_coll.insert_one(dict(job_doc))  # copy: the driver adds a non-serialisable _id
         return job_doc

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { formatLocalDateTime } from "../utils/formatters";
 import {
   UploadCloud,
   FileSpreadsheet,
@@ -100,7 +101,7 @@ export default function UploadView({ onImportComplete }) {
   };
 
   const handleCommit = async () => {
-    if (!validationResult || !validationResult.valid_records) return;
+    if (!validationResult || !validationResult.valid_rows) return;
 
     setIsProcessing(true);
     setErrorMsg("");
@@ -109,7 +110,6 @@ export default function UploadView({ onImportComplete }) {
         job_id: validationResult.job_id,
         data_type: dataType,
         file_name: selectedFile.name,
-        valid_records: validationResult.valid_records,
         stats: {
           file_size_bytes: selectedFile.size,
           total_rows: validationResult.total_rows,
@@ -505,7 +505,7 @@ export default function UploadView({ onImportComplete }) {
                     </span>
                   </td>
                   <td className="py-2.5 text-right text-slate-400 text-[11px]">
-                    {job.created_at ? job.created_at.slice(0, 16).replace("T", " ") : ""}
+                    {formatLocalDateTime(job.created_at)}
                   </td>
                 </tr>
               ))}

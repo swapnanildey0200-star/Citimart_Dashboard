@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     NUMBER_FORMAT: str = "lakh_crore"
     
     # Security
-    MAX_UPLOAD_SIZE_MB: int = 50
+    MAX_UPLOAD_SIZE_MB: int = 200
     SECRET_KEY: str = "citimart-secret-analytics-key"
     
     @property

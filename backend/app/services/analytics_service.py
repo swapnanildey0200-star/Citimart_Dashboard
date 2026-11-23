@@ -1,3 +1,4 @@
+import re
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta
 from app.database import db_manager
@@ -23,6 +24,32 @@ def shift_date_years(date_str: str, years: int = -1) -> str:
         return new_dt.strftime("%Y-%m-%d")
     except Exception:
         return date_str
+
+NON_STORE_LOCATION = re.compile(r"warehouse|godown|package", re.IGNORECASE)
+
+
+def is_warehouse_location(store_id: str) -> bool:
+    """Warehouse / godown / package stock is a supply source, not shop-floor stock."""
+    return bool(NON_STORE_LOCATION.search(store_id or ""))
+
+
+HIERARCHY_FIELDS = ("division", "section", "department", "brand")
+
+
+def enrich_product_lookup(prod_lookup: Dict[str, Dict[str, Any]], records: List[Dict[str, Any]]) -> None:
+    """Fills gaps in the product master from division/section/department carried on sales and stock rows."""
+    for r in records:
+        sku = r.get("sku")
+        if not sku or not any(r.get(f) for f in HIERARCHY_FIELDS):
+            continue
+        p = prod_lookup.get(sku)
+        if p is None:
+            prod_lookup[sku] = {"sku": sku, "name": sku, **{f: r[f] for f in HIERARCHY_FIELDS if r.get(f)}}
+        else:
+            for f in HIERARCHY_FIELDS:
+                if not p.get(f) and r.get(f):
+                    p[f] = r[f]
+
 
 class AnalyticsService:
     @staticmethod
@@ -68,6 +95,9 @@ class AnalyticsService:
             sales_query["date"] = {"$gte": ty_from, "$lte": ty_to}
 
         all_sales = await sales_coll.find(sales_query)
+        all_inv = await inv_coll.find({})
+        enrich_product_lookup(prod_lookup, all_sales)
+        enrich_product_lookup(prod_lookup, all_inv)
 
         # Apply product hierarchy filtering and classify into TY/LY dynamically
         filtered_sales = []
@@ -97,19 +127,22 @@ class AnalyticsService:
             elif not ty_from and not ty_to:
                 filtered_sales.append(s)
 
-        # Query inventory
-        inv_query: Dict[str, Any] = {}
-        if filters.get("stores"):
-            inv_query["store_id"] = {"$in": filters["stores"]}
-        all_inv = await inv_coll.find(inv_query)
+        # Inventory: the store filter applies to shop stock only; warehouse stock stays visible
         filtered_inv = []
         for i in all_inv:
+            if filters.get("stores") and not is_warehouse_location(i["store_id"]) and i["store_id"] not in filters["stores"]:
+                continue
             p = prod_lookup.get(i["sku"], {})
             if filters.get("divisions") and p.get("division") not in filters["divisions"]:
+                continue
+            if filters.get("sections") and p.get("section") not in filters["sections"]:
                 continue
             if filters.get("departments") and p.get("department") not in filters["departments"]:
                 continue
             filtered_inv.append(i)
+
+        warehouse_inv = [i for i in filtered_inv if is_warehouse_location(i["store_id"])]
+        filtered_inv = [i for i in filtered_inv if not is_warehouse_location(i["store_id"])]
 
         # Query purchases
         purch_query: Dict[str, Any] = {}
@@ -122,6 +155,7 @@ class AnalyticsService:
         return {
             "sales": filtered_sales,
             "inventory": filtered_inv,
+            "warehouse_inventory": warehouse_inv,
             "purchases": all_purch,
             "products": prod_lookup,
             "stores": store_lookup
@@ -154,6 +188,8 @@ class AnalyticsService:
         # Inventory
         stock_qty = sum(i["stock_qty"] for i in inventory)
         stock_value = sum(i["stock_value"] for i in inventory)
+        warehouse_qty = sum(i["stock_qty"] for i in data["warehouse_inventory"])
+        warehouse_value = sum(i["stock_value"] for i in data["warehouse_inventory"])
 
         # Stock cover days (Daily run rate = ty_qty / days)
         # Approximate period days as 90 (or distinct dates in TY)
@@ -184,6 +220,8 @@ class AnalyticsService:
             "gross_margin_pct": gross_margin_pct,
             "stock_qty": stock_qty,
             "stock_value": round(stock_value, 2),
+            "warehouse_qty": warehouse_qty,
+            "warehouse_value": round(warehouse_value, 2),
             "stock_cover_days": stock_cover_days,
             "sell_through_pct": sell_through_pct,
             "purchase_qty": purchase_qty,
@@ -470,7 +508,8 @@ class AnalyticsService:
             "31-60 days": {"qty": 0, "val": 0.0, "skus": 0},
             "61-90 days": {"qty": 0, "val": 0.0, "skus": 0},
             "91-180 days": {"qty": 0, "val": 0.0, "skus": 0},
-            ">180 days": {"qty": 0, "val": 0.0, "skus": 0}
+            ">180 days": {"qty": 0, "val": 0.0, "skus": 0},
+            "Unknown": {"qty": 0, "val": 0.0, "skus": 0}
         }
 
         # Movement classification
@@ -486,12 +525,14 @@ class AnalyticsService:
         for i in inventory:
             sku = i["sku"]
             p = prod_lookup.get(sku, {})
-            age = i.get("age_days", 0)
+            age = i.get("age_days")
             stock_qty = i.get("stock_qty", 0)
             stock_val = i.get("stock_value", 0.0)
 
             # Assign aging bucket
-            if age <= 30:
+            if age is None:
+                b = "Unknown"
+            elif age <= 30:
                 b = "0-30 days"
             elif age <= 60:
                 b = "31-60 days"
@@ -550,9 +591,121 @@ class AnalyticsService:
         }
 
         return {
-            "aging_buckets": bucket_chart,
+            "aging_buckets": [b for b in bucket_chart if b["bucket"] != "Unknown" or b["sku_count"]],
+            "warehouse": {
+                "stock_qty": sum(i["stock_qty"] for i in data["warehouse_inventory"]),
+                "stock_value": round(sum(i["stock_value"] for i in data["warehouse_inventory"]), 2),
+                "sku_count": len({i["sku"] for i in data["warehouse_inventory"] if i["stock_qty"] > 0}),
+            },
             "movement_summary": movement_summary,
             "items": item_details[:50]
+        }
+
+    @classmethod
+    async def get_stock_gap(cls, filters: Dict[str, Any], target_cover_days: int = 30, limit: int = 200) -> Dict[str, Any]:
+        """Stock gap = units short of the target cover, per store + SKU.
+
+        Required stock = daily run rate x target cover days; gap = max(0, required - on-hand).
+        Run rate comes from this-period sales of the same store + SKU over the selected date range.
+        """
+        target_cover_days = max(1, int(target_cover_days or 30))
+        data = await cls.get_filtered_data(filters)
+        inventory = data["inventory"]
+        sales = [s for s in data["sales"] if s.get("period_type", "TY") == "TY"]
+        prod_lookup = data["products"]
+
+        empty = {
+            "target_cover_days": target_cover_days, "has_inventory": bool(inventory), "period_days": 0,
+            "summary": {"stockout_count": 0, "critical_count": 0, "low_count": 0, "gap_qty": 0, "gap_value": 0.0, "lines_checked": 0},
+            "by_store": [], "items": [],
+        }
+        if not inventory or not sales:
+            return empty
+
+        # Days in the sales window: the selected range, else the span actually seen in the data
+        d_from = filters.get("ty_date_from") or filters.get("date_from")
+        d_to = filters.get("ty_date_to") or filters.get("date_to")
+        if not (d_from and d_to):
+            dates = [s["date"] for s in sales if s.get("date")]
+            d_from, d_to = min(dates), max(dates)
+        try:
+            period_days = max(1, (datetime.strptime(d_to, "%Y-%m-%d") - datetime.strptime(d_from, "%Y-%m-%d")).days + 1)
+        except ValueError:
+            period_days = 90
+
+        # Sales per store + SKU
+        sold: Dict[tuple, Dict[str, float]] = {}
+        for s in sales:
+            agg = sold.setdefault((s["store_id"], s["sku"]), {"qty": 0.0, "net": 0.0})
+            agg["qty"] += s.get("quantity", 0) or 0
+            agg["net"] += s.get("net_sales", 0) or 0
+
+        # Latest on-hand per store + SKU
+        latest: Dict[tuple, Dict[str, Any]] = {}
+        for i in inventory:
+            key = (i["store_id"], i["sku"])
+            if key not in latest or i.get("snapshot_date", "") >= latest[key].get("snapshot_date", ""):
+                latest[key] = i
+
+        warehouse_by_sku: Dict[str, float] = {}
+        for w in data["warehouse_inventory"]:
+            warehouse_by_sku[w["sku"]] = warehouse_by_sku.get(w["sku"], 0.0) + max(0.0, w.get("stock_qty", 0) or 0)
+
+        items = []
+        by_store: Dict[str, Dict[str, float]] = {}
+        counts = {"stockout": 0, "critical": 0, "low": 0}
+        for (store_id, sku), agg in sold.items():
+            if agg["qty"] <= 0:
+                continue
+            on_hand = max(0.0, (latest.get((store_id, sku)) or {}).get("stock_qty", 0) or 0)
+            run_rate = agg["qty"] / period_days
+            cover = on_hand / run_rate
+            required = run_rate * target_cover_days
+            gap = max(0.0, required - on_hand)
+            if gap <= 0:
+                continue
+            status = "stockout" if on_hand <= 0 else ("critical" if cover < 7 else "low")
+            asp = agg["net"] / agg["qty"] if agg["qty"] else 0.0
+            counts[status] += 1
+            gap_qty = int(round(gap + 0.4999))  # round up to whole units
+            gap_value = round(gap_qty * asp, 2)
+            st = by_store.setdefault(store_id, {"store_id": store_id, "gap_qty": 0, "gap_value": 0.0, "lines": 0})
+            st["gap_qty"] += gap_qty
+            st["gap_value"] += gap_value
+            st["lines"] += 1
+            items.append({
+                "sku": sku,
+                "name": prod_lookup.get(sku, {}).get("name", sku),
+                "store_id": store_id,
+                "stock_qty": on_hand,
+                "daily_run_rate": round(run_rate, 2),
+                "cover_days": round(cover, 1),
+                "required_qty": int(round(required + 0.4999)),
+                "gap_qty": gap_qty,
+                "gap_value": gap_value,
+                "warehouse_qty": warehouse_by_sku.get(sku, 0),
+                "status": status,
+            })
+
+        items.sort(key=lambda r: r["gap_value"], reverse=True)
+        stores_out = sorted(by_store.values(), key=lambda r: r["gap_value"], reverse=True)
+        for st in stores_out:
+            st["gap_value"] = round(st["gap_value"], 2)
+
+        return {
+            "target_cover_days": target_cover_days,
+            "has_inventory": True,
+            "period_days": period_days,
+            "summary": {
+                "stockout_count": counts["stockout"],
+                "critical_count": counts["critical"],
+                "low_count": counts["low"],
+                "gap_qty": sum(r["gap_qty"] for r in items),
+                "gap_value": round(sum(r["gap_value"] for r in items), 2),
+                "lines_checked": len(sold),
+            },
+            "by_store": stores_out[:15],
+            "items": items[:limit],
         }
 
     @classmethod

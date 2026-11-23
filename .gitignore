@@ -18,4 +18,9 @@ frontend/dist/
 
 # Logs & temp
 *.log
+*.err
 scratch/
+
+# Local sample registers / raw datasets
+Data/
+

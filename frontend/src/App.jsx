@@ -4,6 +4,7 @@ import GlobalFilters from "./components/GlobalFilters";
 import ExecutiveDashboard from "./pages/ExecutiveDashboard";
 import SalesAnalysis from "./pages/SalesAnalysis";
 import InventoryAnalysis from "./pages/InventoryAnalysis";
+import StockGap from "./pages/StockGap";
 import PurchaseAnalysis from "./pages/PurchaseAnalysis";
 import ProductAnalysis from "./pages/ProductAnalysis";
 import StoreAnalysis from "./pages/StoreAnalysis";
@@ -21,6 +22,7 @@ import {
   fetchFilterOptions,
   fetchDecisionCard,
   fetchDbStatus,
+  fetchDataFreshness,
   fetchAlerts
 } from "./services/api";
 
@@ -37,12 +39,14 @@ export default function App() {
     compare_with: "LY",
     stores: null,
     divisions: null,
+    sections: null,
     departments: null
   });
 
   const [filterOptions, setFilterOptions] = useState({
     stores: [],
     divisions: [],
+    sections: [],
     departments: []
   });
 
@@ -55,19 +59,22 @@ export default function App() {
   const [purchaseData, setPurchaseData] = useState({});
   const [decisionData, setDecisionData] = useState(null);
   const [dbStatus, setDbStatus] = useState(null);
+  const [freshness, setFreshness] = useState(null);
   const [criticalAlertCount, setCriticalAlertCount] = useState(0);
 
   // Initial options & DB health load
   useEffect(() => {
     async function loadMeta() {
       try {
-        const [opts, st, alerts] = await Promise.all([
+        const [opts, st, alerts, fresh] = await Promise.all([
           fetchFilterOptions(),
           fetchDbStatus(),
-          fetchAlerts("new")
+          fetchAlerts("new"),
+          fetchDataFreshness()
         ]);
         setFilterOptions(opts);
         setDbStatus(st);
+        setFreshness(fresh);
         const crit = alerts.filter((a) => a.severity === "critical").length;
         setCriticalAlertCount(crit);
       } catch (err) {
@@ -99,6 +106,7 @@ export default function App() {
       setInventoryData(inv);
       setPurchaseData(purch);
       setDecisionData(decision);
+      fetchDataFreshness().then(setFreshness).catch(() => {});
     } catch (err) {
       console.error("Failed to load dashboard data:", err);
       setError("Unable to connect to backend analytics service. Please verify that the backend is running.");
@@ -119,6 +127,7 @@ export default function App() {
       compare_with: "LY",
       stores: null,
       divisions: null,
+      sections: null,
       departments: null
     });
   };
@@ -130,13 +139,14 @@ export default function App() {
         activeTab={activeTab}
         onTabChange={setActiveTab}
         dbStatus={dbStatus}
+        freshness={freshness}
         alertCount={criticalAlertCount}
       />
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 py-4">
         {/* Global Filter Bar (shown on analytical pages) */}
-        {["dashboard", "sales", "inventory", "purchases", "products", "stores"].includes(activeTab) && (
+        {["dashboard", "sales", "inventory", "stockgap", "purchases", "products", "stores"].includes(activeTab) && (
           <GlobalFilters
             filters={filters}
             onChange={setFilters}
@@ -179,6 +189,10 @@ export default function App() {
 
         {activeTab === "inventory" && (
           <InventoryAnalysis inventoryData={inventoryData} kpiData={kpiData} />
+        )}
+
+        {activeTab === "stockgap" && (
+          <StockGap filters={filters} />
         )}
 
         {activeTab === "purchases" && (

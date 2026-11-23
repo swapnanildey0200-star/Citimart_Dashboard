@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { formatLocalDateTime } from "../utils/formatters";
 import { CheckCheck, ShieldAlert, AlertTriangle, FileText, Download, CheckCircle2 } from "lucide-react";
 import { fetchImportHistory, exportCsvData } from "../services/api";
 
@@ -26,7 +27,7 @@ export default function DataQualityView() {
       "Warning Count": h.warning_count,
       "Status": h.status,
       "Summary": h.error_summary,
-      "Date": h.created_at
+      "Date": formatLocalDateTime(h.created_at)
     }));
     exportCsvData("citimart_data_quality_audit.csv", Object.keys(rows[0] || {}), rows);
   };

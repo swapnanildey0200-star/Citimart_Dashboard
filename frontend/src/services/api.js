@@ -60,6 +60,16 @@ export async function fetchInventorySummary(filters = {}) {
   return res.json();
 }
 
+export async function fetchStockGap(filters = {}, targetCoverDays = 30) {
+  const res = await fetch(`${API_BASE}/inventory/stock-gap?target_cover_days=${targetCoverDays}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(filters)
+  });
+  if (!res.ok) throw new Error("Failed to load stock gap");
+  return res.json();
+}
+
 export async function fetchPurchaseSummary(filters = {}) {
   const res = await fetch(`${API_BASE}/purchases/summary`, {
     method: "POST",
@@ -170,6 +180,12 @@ export async function commitUploadData(payload) {
 export async function fetchImportHistory() {
   const res = await fetch(`${API_BASE}/upload/history`);
   if (!res.ok) throw new Error("Failed to load import history");
+  return res.json();
+}
+
+export async function fetchDataFreshness() {
+  const res = await fetch(`${API_BASE}/settings/data-freshness`);
+  if (!res.ok) throw new Error("Failed to load data freshness");
   return res.json();
 }
 

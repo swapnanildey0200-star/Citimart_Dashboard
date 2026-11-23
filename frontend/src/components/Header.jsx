@@ -3,6 +3,7 @@ import {
   LayoutDashboard,
   TrendingUp,
   Boxes,
+  PackageMinus,
   ShoppingBag,
   Tag,
   Store,
@@ -18,6 +19,7 @@ export const NAV_ITEMS = [
   { id: "dashboard", label: "Executive Dashboard", icon: LayoutDashboard },
   { id: "sales", label: "Sales Analysis", icon: TrendingUp },
   { id: "inventory", label: "Inventory Analysis", icon: Boxes },
+  { id: "stockgap", label: "Stock Gap", icon: PackageMinus },
   { id: "purchases", label: "Purchases", icon: ShoppingBag },
   { id: "products", label: "Product Analysis", icon: Tag },
   { id: "stores", label: "Store Analysis", icon: Store },
@@ -27,7 +29,13 @@ export const NAV_ITEMS = [
   { id: "settings", label: "Settings", icon: Settings },
 ];
 
-export default function Header({ activeTab, onTabChange, dbStatus, alertCount = 0 }) {
+function formatDay(iso) {
+  if (!iso) return null;
+  const d = new Date(`${iso}T00:00:00`);
+  return isNaN(d.getTime()) ? iso : d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+}
+
+export default function Header({ activeTab, onTabChange, dbStatus, freshness, alertCount = 0 }) {
   const isDbConnected = dbStatus?.status === "connected";
 
   return (
@@ -57,7 +65,15 @@ export default function Header({ activeTab, onTabChange, dbStatus, alertCount = 
         <div className="flex items-center gap-3 text-xs">
           <div className="hidden sm:flex items-center gap-1.5 text-slate-400 bg-slate-950 px-2.5 py-1 rounded-md border border-slate-800">
             <Calendar className="w-3.5 h-3.5 text-blue-400" />
-            <span>As on: <strong>30 Sep 2026</strong></span>
+            {freshness?.sales_through || freshness?.stock_as_on ? (
+              <span>
+                {freshness.sales_through && <>Sales to: <strong>{formatDay(freshness.sales_through)}</strong></>}
+                {freshness.sales_through && freshness.stock_as_on && " · "}
+                {freshness.stock_as_on && <>Stock as on: <strong>{formatDay(freshness.stock_as_on)}</strong></>}
+              </span>
+            ) : (
+              <span>No data uploaded yet</span>
+            )}
           </div>
 
           <div

@@ -51,3 +51,16 @@ export function getGrowthColor(val, inverse = false) {
     ? "text-emerald-400 bg-emerald-950/40 border-emerald-800/60"
     : "text-rose-400 bg-rose-950/40 border-rose-800/60";
 }
+
+/**
+ * Formats a stored timestamp in the viewer's local time (YYYY-MM-DD HH:mm).
+ * The backend stores UTC without a zone suffix, so a bare ISO string is treated as UTC.
+ */
+export function formatLocalDateTime(iso) {
+  if (!iso) return "";
+  const hasZone = /(Z|[+-]\d{2}:?\d{2})$/.test(iso);
+  const d = new Date(hasZone ? iso : `${iso}Z`);
+  if (isNaN(d.getTime())) return iso;
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
