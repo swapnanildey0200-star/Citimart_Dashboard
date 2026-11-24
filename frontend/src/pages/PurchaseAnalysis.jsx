@@ -76,11 +76,11 @@ export default function PurchaseAnalysis({ purchaseData = {}, kpiData = {} }) {
         <div className="h-60 w-full">
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={vendors} margin={{ top: 10, right: 10, left: -10, bottom: 20 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-              <XAxis dataKey="vendor_name" stroke="#64748b" fontSize={10} interval={0} angle={-15} textAnchor="end" />
-              <YAxis stroke="#64748b" fontSize={11} tickFormatter={(v) => `₹${(v / 1000).toFixed(0)}k`} />
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
+              <XAxis dataKey="vendor_name" stroke="var(--chart-axis)" fontSize={10} interval={0} angle={-15} textAnchor="end" />
+              <YAxis stroke="var(--chart-axis)" fontSize={11} tickFormatter={(v) => `₹${(v / 1000).toFixed(0)}k`} />
               <Tooltip
-                contentStyle={{ backgroundColor: "#0f172a", borderColor: "#334155", borderRadius: "8px", fontSize: "12px" }}
+                contentStyle={{ backgroundColor: "var(--chart-tip-bg)", borderColor: "var(--chart-tip-border)", color: "var(--chart-tip-text)", borderRadius: "8px", fontSize: "12px" }}
                 formatter={(val) => [formatCurrency(val), "Purchase Value"]}
               />
               <Bar dataKey="purchase_value" fill="#3b82f6" radius={[4, 4, 0, 0]} />

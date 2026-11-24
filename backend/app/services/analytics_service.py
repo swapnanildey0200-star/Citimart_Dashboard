@@ -96,6 +96,12 @@ class AnalyticsService:
 
         all_sales = await sales_coll.find(sales_query)
         all_inv = await inv_coll.find({})
+        # Stock is a position, not a flow: use only the latest snapshot of each store/site
+        latest_snap: Dict[str, str] = {}
+        for i in all_inv:
+            if i.get("snapshot_date", "") > latest_snap.get(i["store_id"], ""):
+                latest_snap[i["store_id"]] = i.get("snapshot_date", "")
+        all_inv = [i for i in all_inv if i.get("snapshot_date", "") == latest_snap[i["store_id"]]]
         enrich_product_lookup(prod_lookup, all_sales)
         enrich_product_lookup(prod_lookup, all_inv)
 

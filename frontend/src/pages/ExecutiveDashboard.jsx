@@ -172,20 +172,20 @@ export default function ExecutiveDashboard({
                     <stop offset="95%" stopColor="#94a3b8" stopOpacity={0.0} />
                   </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
                 <XAxis
                   dataKey="date"
-                  stroke="#64748b"
+                  stroke="var(--chart-axis)"
                   fontSize={11}
                   tickFormatter={(d) => (d && d.length > 5 ? d.slice(5) : d)}
                 />
                 <YAxis
-                  stroke="#64748b"
+                  stroke="var(--chart-axis)"
                   fontSize={11}
                   tickFormatter={(v) => `₹${(v / 1000).toFixed(0)}k`}
                 />
                 <Tooltip
-                  contentStyle={{ backgroundColor: "#0f172a", borderColor: "#334155", borderRadius: "8px", fontSize: "12px" }}
+                  contentStyle={{ backgroundColor: "var(--chart-tip-bg)", borderColor: "var(--chart-tip-border)", color: "var(--chart-tip-text)", borderRadius: "8px", fontSize: "12px" }}
                   formatter={(val, name) => [formatCurrency(val), name === "ty_sales" ? "This Year (TY)" : "Last Year (LY)"]}
                   labelFormatter={(l, payload) => {
                     const item = payload && payload[0]?.payload;
@@ -300,27 +300,27 @@ export default function ExecutiveDashboard({
           <div className="h-60 w-full">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={deptData.slice(0, 6)} margin={{ top: 10, right: 10, left: -15, bottom: 20 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
                 <XAxis
                   dataKey="department"
-                  stroke="#64748b"
+                  stroke="var(--chart-axis)"
                   fontSize={10}
                   interval={0}
                   angle={-15}
                   textAnchor="end"
                 />
                 <YAxis
-                  stroke="#64748b"
+                  stroke="var(--chart-axis)"
                   fontSize={11}
                   tickFormatter={(v) => `₹${(v / 1000).toFixed(0)}k`}
                 />
                 <Tooltip
-                  contentStyle={{ backgroundColor: "#0f172a", borderColor: "#334155", borderRadius: "8px", fontSize: "12px" }}
+                  contentStyle={{ backgroundColor: "var(--chart-tip-bg)", borderColor: "var(--chart-tip-border)", color: "var(--chart-tip-text)", borderRadius: "8px", fontSize: "12px" }}
                   formatter={(val, name) => [formatCurrency(val), name === "ty_sales" ? "TY Sales" : "LY Sales"]}
                 />
                 <Legend wrapperStyle={{ fontSize: "11px" }} />
                 <Bar dataKey="ty_sales" name="TY Sales" fill="#3b82f6" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="ly_sales" name="LY Sales" fill="#64748b" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="ly_sales" name="LY Sales" fill="var(--chart-axis)" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>

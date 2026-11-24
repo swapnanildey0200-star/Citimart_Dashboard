@@ -1,4 +1,5 @@
 import React from "react";
+import ThemeToggle from "./ThemeToggle";
 import {
   LayoutDashboard,
   TrendingUp,
@@ -44,7 +45,7 @@ export default function Header({ activeTab, onTabChange, dbStatus, freshness, al
       <div className="max-w-7xl mx-auto px-4 py-2.5 flex items-center justify-between border-b border-slate-800/60">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-600 to-indigo-700 flex items-center justify-center shadow-md shadow-blue-500/20">
-            <span className="font-extrabold text-white text-base tracking-tighter">CM</span>
+            <span className="font-extrabold text-white! text-base tracking-tighter">CM</span>
           </div>
           <div>
             <div className="flex items-center gap-2">
@@ -63,6 +64,7 @@ export default function Header({ activeTab, onTabChange, dbStatus, freshness, al
 
         {/* Status badges */}
         <div className="flex items-center gap-3 text-xs">
+          <ThemeToggle />
           <div className="hidden sm:flex items-center gap-1.5 text-slate-400 bg-slate-950 px-2.5 py-1 rounded-md border border-slate-800">
             <Calendar className="w-3.5 h-3.5 text-blue-400" />
             {freshness?.sales_through || freshness?.stock_as_on ? (

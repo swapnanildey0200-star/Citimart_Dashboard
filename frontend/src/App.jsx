@@ -25,6 +25,7 @@ import {
   fetchDataFreshness,
   fetchAlerts
 } from "./services/api";
+import { presetRange } from "./utils/dateRange";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("dashboard");
@@ -34,14 +35,15 @@ export default function App() {
   // Global Filter State
   const [filters, setFilters] = useState({
     date_preset: "ytd",
-    date_from: "2026-07-01",
-    date_to: "2026-09-30",
+    date_from: null, // set from the latest sales date once data freshness has loaded
+    date_to: null,
     compare_with: "LY",
     stores: null,
     divisions: null,
     sections: null,
     departments: null
   });
+  const [datesReady, setDatesReady] = useState(false);
 
   const [filterOptions, setFilterOptions] = useState({
     stores: [],
@@ -75,10 +77,16 @@ export default function App() {
         setFilterOptions(opts);
         setDbStatus(st);
         setFreshness(fresh);
+        // Default period = financial year to the last sales date in the database
+        if (fresh?.sales_through) {
+          setFilters((f) => ({ ...f, ...presetRange("ytd", fresh.sales_through) }));
+        }
         const crit = alerts.filter((a) => a.severity === "critical").length;
         setCriticalAlertCount(crit);
       } catch (err) {
         console.error("Error loading initial metadata:", err);
+      } finally {
+        setDatesReady(true);
       }
     }
     loadMeta();
@@ -86,6 +94,7 @@ export default function App() {
 
   // Main Analytics Data Loader triggered by filter change
   const loadAnalytics = useCallback(async () => {
+    if (!datesReady) return; // wait for the default date range so we don't load twice
     setIsLoading(true);
     setError(null);
     try {
@@ -113,7 +122,7 @@ export default function App() {
     } finally {
       setIsLoading(false);
     }
-  }, [filters]);
+  }, [filters, datesReady]);
 
   useEffect(() => {
     loadAnalytics();
@@ -122,8 +131,7 @@ export default function App() {
   const handleResetFilters = () => {
     setFilters({
       date_preset: "ytd",
-      date_from: "2026-07-01",
-      date_to: "2026-09-30",
+      ...presetRange("ytd", freshness?.sales_through),
       compare_with: "LY",
       stores: null,
       divisions: null,
@@ -154,6 +162,8 @@ export default function App() {
             onRefresh={loadAnalytics}
             options={filterOptions}
             isLoading={isLoading}
+            mode={activeTab === "stockgap" ? "stockgap" : "default"}
+            anchorDate={freshness?.sales_through || null}
           />
         )}
 

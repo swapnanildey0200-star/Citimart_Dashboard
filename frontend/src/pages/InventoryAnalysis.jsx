@@ -126,15 +126,15 @@ export default function InventoryAnalysis({ inventoryData = {}, kpiData = {} }) 
           <div className="h-60 w-full">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={agingBuckets} margin={{ top: 10, right: 10, left: -10, bottom: 10 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                <XAxis dataKey="bucket" stroke="#64748b" fontSize={11} />
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
+                <XAxis dataKey="bucket" stroke="var(--chart-axis)" fontSize={11} />
                 <YAxis
-                  stroke="#64748b"
+                  stroke="var(--chart-axis)"
                   fontSize={11}
                   tickFormatter={(v) => `₹${(v / 1000).toFixed(0)}k`}
                 />
                 <Tooltip
-                  contentStyle={{ backgroundColor: "#0f172a", borderColor: "#334155", borderRadius: "8px", fontSize: "12px" }}
+                  contentStyle={{ backgroundColor: "var(--chart-tip-bg)", borderColor: "var(--chart-tip-border)", color: "var(--chart-tip-text)", borderRadius: "8px", fontSize: "12px" }}
                   formatter={(val) => [formatCurrency(val), "Stock Value"]}
                 />
                 <Bar dataKey="stock_value" name="Stock Value (₹)" fill="#6366f1" radius={[4, 4, 0, 0]} />

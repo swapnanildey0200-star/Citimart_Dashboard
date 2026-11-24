@@ -19,11 +19,18 @@ COLUMN_ALIASES = {
         "store_id": ["store", "store id", "store name", "store_id", "branch", "shop", "location"],
         "sku": ["item code", "itemcode", "sku", "barcode", "product code", "item_code", "product id"],
         "quantity": ["sum of bill qty", "bill qty", "qty", "quantity", "sold qty", "net qty"],
-        "selling_price": ["mrp", "std rate", "selling price", "rate", "price"],
+        "selling_price": ["mrp", "selling price", "rate", "price"],
         "net_sales": ["sum of net amt", "net sales", "net amt", "net amount", "total amount", "sale value"],
-        "gross_sales": ["gross sales", "gross amt", "mrp value", "gross amount"],
-        "discount": ["sum of discount amt", "discount amt", "discount", "promo amt", "sum of promo amt"],
-        "cogs": ["sum of cogs with gst", "cogs", "cost", "cost price", "std cost"],
+        "gross_sales": ["gross sales", "gross amt", "gr amt", "mrp value", "gross amount"],
+        "discount": ["sum of discount amt", "discount amt", "discount"],
+        "promo_amt": ["sum of promo amt", "promo amt"],
+        "cogs": ["sum of cogs with gst", "cogs"],
+        "unit_cost": ["std rate", "std cost", "unit cost", "cost price", "cost"],
+        "vendor": ["vendor", "supplier"],
+        "brand": ["cat-2 (brand)", "brand"],
+        "style": ["cat-3 (style)", "style"],
+        "size": ["cat-5 (size)", "size"],
+        "received_month": ["ageing", "received month", "grn month"],
         "bill_no": ["bill no", "bill no.", "bill number", "invoice no", "invoice number", "receipt no"],
         "is_void": ["isvoid", "is void", "void", "cancelled"],
         "division": ["division", "div"],
@@ -41,7 +48,12 @@ COLUMN_ALIASES = {
         "received_month": ["category6", "cat-6", "received month", "grn month", "inward month"],
         "division": ["division", "div"],
         "section": ["section", "sec"],
-        "department": ["department", "dept"]
+        "department": ["department", "dept"],
+        "vendor": ["vendor", "supplier"],
+        "brand": ["category2", "cat-2 (brand)", "brand"],
+        "style": ["category3", "cat-3 (style)", "style"],
+        "size": ["category5", "cat-5 (size)", "size"],
+        "mrp": ["mrp", "rsp"]
     },
     "purchases": {
         "po_id": ["grc no.", "grc no", "po id", "po number", "invoice no", "po_id"],
@@ -98,18 +110,20 @@ def _staging_path(job_id: str) -> Path:
 
 
 def _compact_sales(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Rolls bill lines up to one row per date + store + SKU and drops fields no report reads.
+    """Rolls bill lines up to one row per date + store + SKU + division/section/department (so hierarchy
+    filters keep working) and drops fields no report reads.
 
     Analytics only ever sums quantity/sales/discount/cogs by date, store and SKU, so this is lossless
     for every chart while cutting stored documents several-fold (keeps the DB inside Atlas free tier).
     """
-    sums = ("quantity", "net_sales", "gross_sales", "discount", "cogs")
+    sums = ("quantity", "net_sales", "gross_sales", "discount", "promo_amt", "cogs")
+    attrs = ("division", "section", "department", "vendor", "brand", "style", "size", "received_month")
     merged: Dict[tuple, Dict[str, Any]] = {}
     for r in records:
-        key = (r["date"], r["store_id"], r["sku"])
+        key = (r["date"], r["store_id"], r["sku"]) + tuple(r.get(k) for k in attrs)
         m = merged.get(key)
         if m is None:
-            m = {k: r.get(k) for k in ("date", "store_id", "sku", "division", "section", "department", "period_type")}
+            m = {k: r.get(k) for k in ("date", "store_id", "sku", *attrs, "period_type")}
             m.update({k: 0.0 for k in sums})
             merged[key] = m
         for k in sums:
@@ -503,7 +517,7 @@ class UploadService:
 
                 # Numbers: parse leniently (commas, brackets, trailing minus)
                 numeric = {}
-                for fld in ("quantity", "net_sales", "selling_price", "gross_sales", "discount", "cogs"):
+                for fld in ("quantity", "net_sales", "selling_price", "gross_sales", "discount", "promo_amt", "cogs", "unit_cost"):
                     try:
                         numeric[fld] = _to_number(record.get(fld))
                     except ValueError:
@@ -521,7 +535,12 @@ class UploadService:
                 record["net_sales"] = net_sales
                 record["selling_price"] = numeric["selling_price"] or 0.0
                 record["discount"] = numeric["discount"] or 0.0
-                record["cogs"] = numeric["cogs"] or 0.0
+                record["promo_amt"] = numeric["promo_amt"] or 0.0
+                # No COGS column in the sales export: estimate it as quantity x standard rate
+                record["cogs"] = numeric["cogs"] if numeric["cogs"] else qty * (numeric["unit_cost"] or 0.0)
+                record.pop("unit_cost", None)
+                for fld in ("vendor", "brand", "style", "size", "received_month"):
+                    record[fld] = _clean_text(record.get(fld)) or None
                 record["gross_sales"] = numeric["gross_sales"] if numeric["gross_sales"] is not None else net_sales + record["discount"]
 
                 # Returns (negative qty and amount) are valid retail data; a sign mismatch is not
@@ -557,8 +576,12 @@ class UploadService:
                 if not store_val:
                     row_errors.append("Missing Store ID")
                 record["sku"], record["store_id"] = sku_val, store_val
-                for fld in ("division", "section", "department"):
+                for fld in ("division", "section", "department", "vendor", "brand", "style", "size"):
                     record[fld] = _clean_text(record.get(fld)) or None
+                try:
+                    record["mrp"] = _to_number(record.get("mrp")) or 0.0
+                except ValueError:
+                    record["mrp"] = 0.0
 
                 snapshot = _to_date(record.get("snapshot_date")) or datetime.utcnow().strftime("%Y-%m-%d")
                 record["snapshot_date"] = snapshot
@@ -685,6 +708,31 @@ class UploadService:
         }) or 0
 
     @staticmethod
+    async def _replace_stock(target_coll, job_id: str):
+        """Stock is a point-in-time position, so only the latest snapshot per store/site is kept.
+
+        For each store in the file: older snapshots are deleted and replaced by this one. If the database
+        already holds a newer snapshot for that store, the file's rows for it are skipped (never overlap).
+        Returns (rows_replaced, {store_id: existing_newer_date}).
+        """
+        file_dates: Dict[str, str] = {}
+        for batch in _iter_staged_batches(job_id):
+            for r in batch:
+                d = r.get("snapshot_date") or ""
+                if d > file_dates.get(r["store_id"], ""):
+                    file_dates[r["store_id"]] = d
+        skipped: Dict[str, str] = {}
+        replaced = 0
+        for store, d in file_dates.items():
+            newest = await target_coll.find({"store_id": store}, sort=[("snapshot_date", -1)], limit=1)
+            existing = newest[0].get("snapshot_date", "") if newest else ""
+            if existing > d:
+                skipped[store] = existing
+                continue
+            replaced += await target_coll.delete_many({"store_id": store, "snapshot_date": {"$lte": d}}) or 0
+        return replaced, skipped
+
+    @staticmethod
     async def commit_import(job_id: str, data_type: str, filename: str, valid_records: Optional[List[Dict[str, Any]]], stats: Dict[str, Any]):
         """Persists the validated rows staged for job_id (batched) and logs job history."""
         target_coll_map = {
@@ -701,8 +749,12 @@ class UploadService:
         inserted = 0
         staged = _staging_path(job_id)
         replaced = 0
-        if not valid_records and staged.exists() and data_type in ("sales", "inventory"):
-            replaced = await UploadService._replace_overlap(target_coll, data_type, job_id)
+        skipped_stores: Dict[str, str] = {}
+        if not valid_records and staged.exists():
+            if data_type == "sales":
+                replaced = await UploadService._replace_overlap(target_coll, data_type, job_id)
+            elif data_type == "inventory":
+                replaced, skipped_stores = await UploadService._replace_stock(target_coll, job_id)
         if valid_records:  # small/legacy callers that still send rows inline
             for i in range(0, len(valid_records), COMMIT_BATCH_SIZE):
                 chunk = valid_records[i:i + COMMIT_BATCH_SIZE]
@@ -710,6 +762,8 @@ class UploadService:
                 inserted += len(chunk)
         elif staged.exists():
             for batch in _iter_staged_batches(job_id):
+                if skipped_stores:
+                    batch = [r for r in batch if r.get("store_id") not in skipped_stores]
                 await target_coll.insert_many(batch)
                 inserted += len(batch)
             staged.unlink(missing_ok=True)
@@ -729,6 +783,7 @@ class UploadService:
             "created_at": datetime.utcnow().isoformat(),
             "error_summary": f"Imported {inserted} valid rows with {stats.get('invalid_rows', 0)} invalid rows."
             + (f" Replaced {replaced} existing rows for the same stores and dates." if replaced else "")
+            + (f" Skipped stores that already have newer stock: {', '.join(f'{k} ({v})' for k, v in skipped_stores.items())}." if skipped_stores else "")
         }
         await jobs_coll.insert_one(dict(job_doc))  # copy: the driver adds a non-serialisable _id
         return job_doc

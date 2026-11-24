@@ -1,5 +1,6 @@
 import React from "react";
 import { Filter, Calendar, RefreshCw, X } from "lucide-react";
+import { presetRange } from "../utils/dateRange";
 
 export default function GlobalFilters({
   filters,
@@ -7,46 +8,19 @@ export default function GlobalFilters({
   onReset,
   onRefresh,
   options = {},
-  isLoading = false
+  isLoading = false,
+  // "stockgap": stock is a snapshot, so only a sales window (run rate) applies: no LY range, no Yesterday/WTD/MTD/YTD
+  mode = "default",
+  anchorDate = null // latest sales date; presets count back from it
 }) {
   const { stores = [], divisions = [], sections = [], departments = [] } = options;
+  const isStockGap = mode === "stockgap";
 
-  const handleDatePreset = (preset) => {
-    const today = new Date();
-    const todayStr = today.toISOString().split('T')[0];
-    
-    let dateFrom = null;
-    let dateTo = todayStr;
-
-    if (preset === "yesterday") {
-      const yesterday = new Date(today);
-      yesterday.setDate(today.getDate() - 1);
-      dateFrom = yesterday.toISOString().split('T')[0];
-      dateTo = dateFrom;
-    } else if (preset === "wtd") {
-      const wtdStart = new Date(today);
-      const day = wtdStart.getDay();
-      const diff = wtdStart.getDate() - day + (day === 0 ? -6 : 1); // Monday start
-      wtdStart.setDate(diff);
-      dateFrom = wtdStart.toISOString().split('T')[0];
-    } else if (preset === "mtd") {
-      const mtdStart = new Date(today.getFullYear(), today.getMonth(), 1);
-      dateFrom = mtdStart.toISOString().split('T')[0];
-    } else if (preset === "ytd") {
-      // Financial Year starts April 1st
-      let ytdYear = today.getFullYear();
-      if (today.getMonth() < 3) { // Jan, Feb, Mar
-        ytdYear -= 1;
-      }
-      const ytdStart = new Date(ytdYear, 3, 1);
-      dateFrom = ytdStart.toISOString().split('T')[0];
-    }
-
+  const handlePreset = (preset) => {
     onChange({
       ...filters,
       date_preset: preset,
-      date_from: dateFrom,
-      date_to: dateTo,
+      ...presetRange(preset, anchorDate),
       ly_date_from: null,
       ly_date_to: null
     });
@@ -99,15 +73,22 @@ export default function GlobalFilters({
         {/* Date presets */}
         <div className="flex items-center gap-1.5 bg-slate-950 p-1 rounded-lg border border-slate-800 text-xs">
           <Calendar className="w-3.5 h-3.5 text-slate-400 ml-1.5 mr-0.5" />
-          {[
-            { id: "yesterday", label: "Yesterday" },
-            { id: "wtd", label: "WTD" },
-            { id: "mtd", label: "MTD" },
-            { id: "ytd", label: "YTD (FY)" }
-          ].map((item) => (
+          {(isStockGap
+            ? [
+                { id: "last30", label: "Last 30d" },
+                { id: "last60", label: "Last 60d" },
+                { id: "last90", label: "Last 90d" }
+              ]
+            : [
+                { id: "yesterday", label: "Yesterday" },
+                { id: "wtd", label: "WTD" },
+                { id: "mtd", label: "MTD" },
+                { id: "ytd", label: "YTD (FY)" }
+              ]
+          ).map((item) => (
             <button
               key={item.id}
-              onClick={() => handleDatePreset(item.id)}
+              onClick={() => handlePreset(item.id)}
               className={`px-2.5 py-1 rounded-md font-medium transition-colors cursor-pointer ${filters.date_preset === item.id
                   ? "bg-blue-600 text-white shadow-sm"
                   : "text-slate-400 hover:text-slate-200 hover:bg-slate-900"
@@ -120,7 +101,7 @@ export default function GlobalFilters({
 
         {/* Custom Date Range TY */}
         <div className="flex items-center gap-1.5 bg-slate-950 p-1.5 rounded-lg border border-slate-800 text-xs text-slate-200">
-          <span className="font-semibold text-blue-400">TY:</span>
+          <span className="font-semibold text-blue-400">{isStockGap ? "Sales window:" : "TY:"}</span>
           <input 
             type="date" 
             className="bg-transparent outline-none cursor-pointer [&::-webkit-calendar-picker-indicator]:invert-[0.7]"
@@ -137,7 +118,7 @@ export default function GlobalFilters({
         </div>
 
         {/* Custom Date Range LY */}
-        <div className="flex items-center gap-1.5 bg-slate-950 p-1.5 rounded-lg border border-slate-800 text-xs text-slate-200">
+        {!isStockGap && <div className="flex items-center gap-1.5 bg-slate-950 p-1.5 rounded-lg border border-slate-800 text-xs text-slate-200">
           <span className="font-semibold text-orange-400">LY:</span>
           <input 
             type="date" 
@@ -152,7 +133,7 @@ export default function GlobalFilters({
             value={filters.ly_date_to || ""}
             onChange={(e) => onChange({ ...filters, date_preset: "custom", ly_date_to: e.target.value })}
           />
-        </div>
+        </div>}
 
         {/* Hierarchy & Store Dropdowns */}
         <div className="flex flex-wrap items-center gap-2 text-xs">
